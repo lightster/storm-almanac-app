@@ -187,6 +187,13 @@ pub fn run() {
             get_config,
             save_config_cmd,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                let _ = _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                toggle_window(_app);
+            }
+        });
 }
