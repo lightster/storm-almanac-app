@@ -45,6 +45,11 @@
 						<p class="text-[11px] text-zinc-500 mt-0.5">
 							{timeAgo(upload.createdAt)}
 						</p>
+						{#if upload.status === 'error' && upload.retryCount >= 5 && upload.error}
+							<p class="text-[11px] text-red-400/80 mt-0.5 truncate" title={upload.error}>
+								{upload.error}
+							</p>
+						{/if}
 					</div>
 					<StatusBadge status={upload.status} retryCount={upload.retryCount} />
 				</div>
