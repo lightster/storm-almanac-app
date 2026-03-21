@@ -4,3 +4,4 @@ node_modules/
 src-tauri/target/
 src-tauri/gen/
 vite.config.js.timestamp-*
+mise.local.toml

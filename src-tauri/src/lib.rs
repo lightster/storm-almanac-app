@@ -37,6 +37,14 @@ const WINDOW_LABEL: &str = "main";
 const WINDOW_WIDTH: f64 = 360.0;
 const WINDOW_HEIGHT: f64 = 480.0;
 
+const WEBSITE_LABEL: &str = "website";
+const WEBSITE_URL: &str = match option_env!("STORM_WEBSITE_URL") {
+    Some(url) => url,
+    None => "https://hots.lightster.ninja",
+};
+const WEBSITE_WIDTH: f64 = 1024.0;
+const WEBSITE_HEIGHT: f64 = 768.0;
+
 fn position_near_tray(window: &tauri::WebviewWindow) {
     // move_window can panic if tray position hasn't been tracked yet
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -101,6 +109,53 @@ fn toggle_window(app: &tauri::AppHandle) {
     }
 }
 
+fn open_website_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(WEBSITE_LABEL) {
+        let _ = window.set_focus();
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+
+    let url = WebviewUrl::External(WEBSITE_URL.parse().unwrap());
+    let window = WebviewWindowBuilder::new(app, WEBSITE_LABEL, url)
+        .title("Storm Uploader — Website")
+        .inner_size(WEBSITE_WIDTH, WEBSITE_HEIGHT)
+        .resizable(true)
+        .decorations(true)
+        .skip_taskbar(false)
+        .visible(true)
+        .build();
+
+    if let Ok(win) = window {
+        let app_handle = app.clone();
+        win.on_window_event(move |event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                #[cfg(target_os = "macos")]
+                let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+        });
+    }
+}
+
+#[tauri::command]
+fn save_build() -> Result<(), String> {
+    log::info!("save_build stub called");
+    Ok(())
+}
+
+#[tauri::command]
+fn load_overlay() -> Result<(), String> {
+    log::info!("load_overlay stub called");
+    Ok(())
+}
+
+#[tauri::command]
+fn open_uploads(app: tauri::AppHandle) {
+    toggle_window(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -139,10 +194,13 @@ pub fn run() {
             app.manage(UploadSemaphore::new(5));
 
             // Build tray icon
+            let open_website = MenuItemBuilder::with_id("open_website", "Open Website").build(app)?;
             let check_update = MenuItemBuilder::with_id("check_update", "Check for Updates").build(app)?;
             let rescan = MenuItemBuilder::with_id("rescan", "Re-upload All Replays").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Uploader").build(app)?;
             let menu = MenuBuilder::new(app)
+                .item(&open_website)
+                .separator()
                 .item(&check_update)
                 .item(&rescan)
                 .separator()
@@ -169,6 +227,8 @@ pub fn run() {
                 .on_menu_event(|app, event| {
                     if event.id() == "quit" {
                         app.exit(0);
+                    } else if event.id() == "open_website" {
+                        open_website_window(app);
                     } else if event.id() == "check_update" {
                         let handle = app.clone();
                         tauri::async_runtime::spawn(async move {
@@ -213,14 +273,16 @@ pub fn run() {
             autostart::enable_autostart,
             autostart::disable_autostart,
             autostart::is_autostart_enabled,
+            save_build,
+            load_overlay,
+            open_uploads,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
-                let _ = _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                toggle_window(_app);
+                open_website_window(_app);
             }
         });
 }
