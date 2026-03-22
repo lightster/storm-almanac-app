@@ -178,8 +178,11 @@ fn is_game_running() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         std::process::Command::new("tasklist")
             .args(["/NH", "/FI", "IMAGENAME eq HeroesOfTheStorm_x64.exe"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("HeroesOfTheStorm"))
             .unwrap_or(false)
@@ -191,8 +194,10 @@ fn is_game_running() -> bool {
 }
 
 #[tauri::command]
-fn is_game_running_cmd() -> bool {
-    is_game_running()
+async fn is_game_running_cmd() -> bool {
+    tokio::task::spawn_blocking(is_game_running)
+        .await
+        .unwrap_or(false)
 }
 
 fn find_talent_builds_path(watch_dir: &str) -> Option<PathBuf> {
