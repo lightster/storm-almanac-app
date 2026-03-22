@@ -140,6 +140,34 @@ fn open_website_window(app: &tauri::AppHandle) {
     }
 }
 
+fn is_game_running() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("pgrep")
+            .args(["-f", "Heroes of the Storm"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/NH", "/FI", "IMAGENAME eq HeroesOfTheStorm_x64.exe"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("HeroesOfTheStorm"))
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+fn is_game_running_cmd() -> bool {
+    is_game_running()
+}
+
 fn find_talent_builds_path(watch_dir: &str) -> Option<PathBuf> {
     let accounts_dir = std::path::Path::new(watch_dir);
     let entries = std::fs::read_dir(accounts_dir).ok()?;
@@ -317,6 +345,7 @@ pub fn run() {
             autostart::is_autostart_enabled,
             read_talent_builds,
             write_talent_builds,
+            is_game_running_cmd,
             load_overlay,
             open_uploads,
         ])
