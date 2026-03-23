@@ -36,7 +36,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRFM0QzQ0NDOUEwMENDQzUKUldURnpBQ2F6RHc5VGdpL2NTQVZHM1BuaVpFNkI0cjYvaEpRK3IzWmZxYjZlRkVGVCt5OU4wd3IK",
       "endpoints": [
-        "https://github.com/lightster/storm-uploader/releases/latest/download/latest.json"
+        "https://github.com/lightster/storm-almanac-app/releases/latest/download/latest.json"
       ]
     }
   }
