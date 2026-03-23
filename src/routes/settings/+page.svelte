@@ -1,5 +1,6 @@
 <script>
 	import { invoke } from '@tauri-apps/api/core';
+	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import { onMount } from 'svelte';
 
 	let watchDir = $state('');
@@ -26,6 +27,23 @@
 		}
 		autostartLoaded = true;
 	});
+
+	async function browseWatchDir() {
+		const selected = await openDialog({
+			directory: true,
+			defaultPath: watchDir || undefined,
+			title: 'Select watch folder',
+		});
+		if (selected) {
+			watchDir = selected;
+		}
+	}
+
+	function revealWatchDir() {
+		if (watchDir) {
+			invoke('reveal_path', { path: watchDir });
+		}
+	}
 
 	async function handleSave() {
 		autostartError = '';
@@ -59,12 +77,33 @@
 					<label for="watch-dir" class="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">
 						Watch folder
 					</label>
-					<input
-						id="watch-dir"
-						type="text"
-						bind:value={watchDir}
-						class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-blue-500 transition-colors"
-					/>
+					<div class="flex gap-1.5">
+						<input
+							id="watch-dir"
+							type="text"
+							bind:value={watchDir}
+							class="flex-1 min-w-0 rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-blue-500 transition-colors"
+						/>
+						<button
+							onclick={browseWatchDir}
+							title="Browse"
+							class="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 transition-colors"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+							</svg>
+						</button>
+						<button
+							onclick={revealWatchDir}
+							disabled={!watchDir}
+							title="Reveal in file manager"
+							class="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-400 hover:text-zinc-200 hover:border-zinc-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+							</svg>
+						</button>
+					</div>
 				</div>
 
 				<div>

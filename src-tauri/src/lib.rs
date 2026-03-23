@@ -297,6 +297,24 @@ fn write_talent_builds(app: tauri::AppHandle, contents: String) -> Result<(), St
 }
 
 #[tauri::command]
+fn reveal_path(path: String) {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn();
+    }
+}
+
+#[tauri::command]
 fn load_overlay() -> Result<(), String> {
     log::info!("load_overlay stub called");
     Ok(())
@@ -311,6 +329,7 @@ pub fn run() {
             Some(vec![]),
         ))
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -518,6 +537,7 @@ pub fn run() {
             write_talent_builds,
             is_game_running_cmd,
             load_overlay,
+            reveal_path,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
