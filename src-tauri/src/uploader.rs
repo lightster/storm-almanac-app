@@ -37,6 +37,7 @@ pub async fn upload_file(
     let client = reqwest::Client::new();
     let response = client
         .post(url)
+        .header("Origin", "storm-almanac://")
         .multipart(form)
         .send()
         .await
