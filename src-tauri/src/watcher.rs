@@ -207,8 +207,12 @@ pub async fn do_upload(app: &AppHandle, entry_id: &str) {
             let mut state = state.lock().unwrap();
             state.update_entry(entry_id, |entry| {
                 entry.status = UploadStatus::Error;
-                entry.error = Some(e.to_string());
-                entry.retry_count += 1;
+                entry.error = Some(e.message);
+                if e.retryable {
+                    entry.retry_count += 1;
+                } else {
+                    entry.retry_count = 5;
+                }
             });
         }
     }

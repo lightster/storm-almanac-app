@@ -368,6 +368,17 @@ pub fn run() {
             app_state.uploads = VecDeque::from(history);
             app_state.known_hashes = known_hashes;
 
+            // Reset interrupted uploads so the retry loop picks them up
+            for entry in app_state.uploads.iter_mut() {
+                if entry.status == state::UploadStatus::Uploading
+                    || entry.status == state::UploadStatus::Pending
+                {
+                    entry.status = state::UploadStatus::Error;
+                    entry.error = Some("Interrupted by app restart".to_string());
+                    entry.retry_count = 0;
+                }
+            }
+
             app.manage(Mutex::new(app_state));
             app.manage(UploadSemaphore::new(5));
             app.manage(UploadChannels::default());
