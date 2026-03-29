@@ -16,6 +16,8 @@ struct InputEvent {
     event_type: &'static str,
     key: String,
     raw: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 fn system_time_millis(time: SystemTime) -> u64 {
@@ -48,8 +50,21 @@ fn key_name(event_type: &rdev::EventType) -> String {
 
 fn raw_code(event_type: &rdev::EventType) -> u32 {
     match event_type {
-        rdev::EventType::KeyPress(rdev::Key::Unknown(code))
-        | rdev::EventType::KeyRelease(rdev::Key::Unknown(code)) => *code as u32,
+        rdev::EventType::KeyPress(key) | rdev::EventType::KeyRelease(key) => {
+            if let rdev::Key::Unknown(code) = key {
+                *code as u32
+            } else {
+                0
+            }
+        }
+        rdev::EventType::ButtonPress(btn) | rdev::EventType::ButtonRelease(btn) => {
+            match btn {
+                rdev::Button::Left => 1,
+                rdev::Button::Right => 2,
+                rdev::Button::Middle => 3,
+                rdev::Button::Unknown(code) => *code as u32,
+            }
+        }
         _ => 0,
     }
 }
@@ -113,6 +128,7 @@ impl InputRecorder {
                             event_type: type_str,
                             key: key_name(&event.event_type),
                             raw: raw_code(&event.event_type),
+                            name: event.name,
                         };
                         if let Ok(json) = serde_json::to_string(&input_event) {
                             let _ = writeln!(writer, "{}", json);
