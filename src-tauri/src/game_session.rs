@@ -237,7 +237,8 @@ async fn do_upload_session(
     }
 }
 
-/// Retry uploading any .gz session files left from previous crashes
+/// Retry uploading any leftover session files from previous crashes.
+/// Handles both orphaned .jsonl files (not yet compressed) and .gz files (compressed but not uploaded).
 pub async fn retry_pending_uploads(app: &tauri::AppHandle) {
     let session_dir = match app.path().app_data_dir() {
         Ok(d) => d,
@@ -249,50 +250,129 @@ pub async fn retry_pending_uploads(app: &tauri::AppHandle) {
         Err(_) => return,
     };
 
+    // Collect .jsonl files to process (compress + upload)
+    let mut jsonl_files: Vec<std::path::PathBuf> = Vec::new();
+    let mut gz_files: Vec<std::path::PathBuf> = Vec::new();
+
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("gz") {
-            continue;
-        }
-        let file_name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default();
-        // Expected: {uuid}_inputs.jsonl  (the .gz extension was already stripped by file_stem)
-        // But with .jsonl.gz the stem is {uuid}_inputs.jsonl, so strip .jsonl too
-        let session_uuid = file_name
-            .strip_suffix("_inputs.jsonl")
-            .or_else(|| file_name.strip_suffix("_inputs"))
-            .unwrap_or(file_name);
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
 
+        if name.ends_with("_inputs.jsonl.gz") {
+            gz_files.push(path);
+        } else if name.ends_with("_inputs.jsonl") {
+            jsonl_files.push(path);
+        }
+    }
+
+    // Process orphaned .jsonl files: compress then upload
+    for jsonl_path in &jsonl_files {
+        let gz_path = jsonl_path.with_extension("jsonl.gz");
+        if gz_files.iter().any(|p| p == &gz_path) {
+            continue; // .gz already exists, will be handled below
+        }
+
+        let session_uuid = extract_session_uuid(jsonl_path);
         if session_uuid.is_empty() {
             continue;
         }
 
-        // Decompress to read timestamps, then re-upload
-        let jsonl_path = session_dir.join(format!("{}_inputs.jsonl", session_uuid));
-        if jsonl_path.exists() {
-            if let Some((started_at, ended_at)) = read_session_timestamps(&jsonl_path) {
-                let url = format!("{}/api/input-sessions/upload", crate::API_URL);
-                match do_upload_session(&url, session_uuid, &path, started_at, ended_at).await {
-                    Ok(_) => {
-                        log::info!("Retried session {} uploaded successfully", session_uuid);
-                        let _ = std::fs::remove_file(&jsonl_path);
-                        let _ = std::fs::remove_file(&path);
-                    }
-                    Err(e) => {
-                        log::warn!("Retry upload failed for session {}: {}", session_uuid, e);
+        if let Some((started_at, ended_at)) = read_session_timestamps(jsonl_path) {
+            match gzip_file(jsonl_path) {
+                Ok(gz) => {
+                    let url = format!("{}/api/input-sessions/upload", crate::API_URL);
+                    match do_upload_session(&url, &session_uuid, &gz, started_at, ended_at).await {
+                        Ok(_) => {
+                            log::info!("Retried session {} uploaded successfully", session_uuid);
+                            let _ = std::fs::remove_file(jsonl_path);
+                            let _ = std::fs::remove_file(&gz);
+                        }
+                        Err(e) => {
+                            log::warn!("Retry upload failed for session {}: {}", session_uuid, e);
+                            let _ = std::fs::remove_file(jsonl_path);
+                            // Keep .gz for next retry
+                        }
                     }
                 }
+                Err(e) => {
+                    log::error!("Failed to compress session {}: {}", session_uuid, e);
+                }
             }
-        } else {
-            // .gz exists but .jsonl doesn't — we can read timestamps from the gz
-            // For now, just log and skip. The user can manually handle these.
-            log::warn!(
-                "Found orphaned gz session file without jsonl: {:?}",
-                path
-            );
         }
+    }
+
+    // Process .gz files that haven't been uploaded yet
+    for gz_path in &gz_files {
+        let session_uuid = extract_session_uuid(gz_path);
+        if session_uuid.is_empty() {
+            continue;
+        }
+
+        // Try to read timestamps from the companion .jsonl if it exists
+        let jsonl_path = gz_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(format!("{}_inputs.jsonl", session_uuid));
+
+        let timestamps = if jsonl_path.exists() {
+            read_session_timestamps(&jsonl_path)
+        } else {
+            read_session_timestamps_from_gz(gz_path)
+        };
+
+        if let Some((started_at, ended_at)) = timestamps {
+            let url = format!("{}/api/input-sessions/upload", crate::API_URL);
+            match do_upload_session(&url, &session_uuid, gz_path, started_at, ended_at).await {
+                Ok(_) => {
+                    log::info!("Retried session {} uploaded successfully", session_uuid);
+                    let _ = std::fs::remove_file(&jsonl_path);
+                    let _ = std::fs::remove_file(gz_path);
+                }
+                Err(e) => {
+                    log::warn!("Retry upload failed for session {}: {}", session_uuid, e);
+                }
+            }
+        }
+    }
+}
+
+fn extract_session_uuid(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    name.split("_inputs").next().unwrap_or_default().to_string()
+}
+
+fn read_session_timestamps_from_gz(gz_path: &Path) -> Option<(u64, u64)> {
+    use flate2::read::GzDecoder;
+    use std::io::{BufRead, BufReader};
+
+    let file = std::fs::File::open(gz_path).ok()?;
+    let decoder = GzDecoder::new(file);
+    let reader = BufReader::new(decoder);
+
+    let mut first_ts: Option<u64> = None;
+    let mut last_ts: Option<u64> = None;
+
+    for line in reader.lines() {
+        let line = line.ok()?;
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+            if let Some(t) = val.get("t").and_then(|v| v.as_u64()) {
+                if first_ts.is_none() {
+                    first_ts = Some(t);
+                }
+                last_ts = Some(t);
+            }
+        }
+    }
+
+    match (first_ts, last_ts) {
+        (Some(f), Some(l)) => Some((f, l)),
+        _ => None,
     }
 }
 
