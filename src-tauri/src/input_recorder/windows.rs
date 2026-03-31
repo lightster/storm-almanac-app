@@ -50,7 +50,7 @@ unsafe impl Send for SendHwnd {}
 impl SendHwnd {
     pub fn close(&self) {
         unsafe {
-            let _ = PostMessageW(self.0, WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(self.0), WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }
@@ -233,7 +233,7 @@ pub fn start_listener(
                 0,
                 0,
                 0,
-                HWND_MESSAGE,
+                Some(HWND_MESSAGE),
                 None,
                 Some(hinstance.into()),
                 None,
