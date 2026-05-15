@@ -823,6 +823,10 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .max_file_size(1_000_000) // 1MB per log file
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .level(log::LevelFilter::Info)
+                // The notify crate logs every filesystem event; left at Info it
+                // floods the log and rotates out the probe's own output.
+                .level_for("notify", log::LevelFilter::Warn)
                 .build(),
         )
         .plugin(tauri_plugin_store::Builder::default().build())

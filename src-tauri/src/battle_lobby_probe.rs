@@ -1,7 +1,8 @@
-// Watches the OS temp directory for HoTS's *.battlelobby file (written when
-// you enter a draft / matchmaking lobby) and pulls the first .s2ma cache
-// hash out. That hash is a stable, unique identifier for the active
-// battleground — so we use it as the lookup key for per-map blocker rects.
+// Watches %TEMP% (recursively) for HoTS's replay.server.battlelobby file,
+// which HoTS writes at game start under
+// %TEMP%\Heroes of the Storm\TempWriteReplay*\. We fingerprint the set of
+// .s2ma cache hashes it references — a stable, per-battleground identifier —
+// and use that as the lookup key for per-map blocker rects.
 //
 // As a debug aid the watcher also copies each file it sees to
 // <app_log_dir>/battlelobby-dumps/ and logs a hash-extraction summary, so
@@ -32,7 +33,7 @@ pub fn start(app: tauri::AppHandle) {
 
     let watch_dirs = candidate_watch_dirs();
     log::info!(
-        "battlelobby probe: dumps -> {:?}, candidate dirs ({}):",
+        "battlelobby probe: dumps -> {:?}, watching {} dir(s) recursively:",
         dumps_dir,
         watch_dirs.len()
     );
@@ -40,9 +41,9 @@ pub fn start(app: tauri::AppHandle) {
         log::info!("  - {:?}", d);
     }
 
-    // Pick up any existing file in any candidate dir at startup.
-    for dir in &watch_dirs {
-        process_existing_files(&app, dir, &dumps_dir);
+    // Pick up the battlelobby file if HoTS is already mid-game at startup.
+    if let Some(hots_dir) = hots_temp_dir() {
+        process_existing_files(&app, &hots_dir, &dumps_dir);
     }
 
     let app_clone = app.clone();
@@ -62,7 +63,7 @@ pub fn start(app: tauri::AppHandle) {
 
         let mut watched_any = false;
         for dir in &watch_dirs {
-            match watcher.watch(dir, RecursiveMode::NonRecursive) {
+            match watcher.watch(dir, RecursiveMode::Recursive) {
                 Ok(()) => {
                     log::info!("battlelobby probe: watching {:?}", dir);
                     watched_any = true;
@@ -104,44 +105,20 @@ pub fn start(app: tauri::AppHandle) {
     });
 }
 
-/// Common locations HoTS has been observed writing the battlelobby file
-/// to, depending on platform and OneDrive-redirected folders.
+/// Directory to watch for the battlelobby file. HoTS writes it under
+/// %TEMP%\Heroes of the Storm\TempWriteReplay*\, so we watch the temp root
+/// recursively — that way the file is caught wherever HoTS stages it, even
+/// if that subtree doesn't exist yet when the probe starts.
 fn candidate_watch_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-
-    dirs.push(std::env::temp_dir());
-
-    if let Some(home) = dirs::home_dir() {
-        dirs.push(home.clone());
-        dirs.push(home.join("Documents"));
-        dirs.push(home.join("OneDrive"));
-        dirs.push(home.join("OneDrive").join("Documents"));
-
-        // macOS OneDrive sync root.
-        dirs.push(home.join("Library/CloudStorage/OneDrive-Personal"));
-        // Other OneDrive variants surfaced on some configs.
-        if let Ok(entries) = std::fs::read_dir(home.join("Library/CloudStorage")) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir()
-                    && p.file_name()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.starts_with("OneDrive"))
-                        .unwrap_or(false)
-                {
-                    dirs.push(p);
-                }
-            }
-        }
-    }
-    if let Some(docs) = dirs::document_dir() {
-        dirs.push(docs);
-    }
-
-    dirs.sort();
-    dirs.dedup();
+    let mut dirs: Vec<PathBuf> = vec![std::env::temp_dir()];
     dirs.retain(|d| d.is_dir());
     dirs
+}
+
+/// The HoTS replay-staging subtree under %TEMP%, if it exists right now.
+fn hots_temp_dir() -> Option<PathBuf> {
+    let dir = std::env::temp_dir().join("Heroes of the Storm");
+    dir.is_dir().then_some(dir)
 }
 
 fn process_existing_files(app: &tauri::AppHandle, dir: &Path, dumps_dir: &Path) {
@@ -151,7 +128,9 @@ fn process_existing_files(app: &tauri::AppHandle, dir: &Path, dumps_dir: &Path) 
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if is_battlelobby_path(&path) {
+        if path.is_dir() {
+            process_existing_files(app, &path, dumps_dir);
+        } else if is_battlelobby_path(&path) {
             log::info!("battlelobby probe: existing file at startup: {:?}", path);
             handle_file(app, &path, dumps_dir);
         }
