@@ -114,6 +114,10 @@ async fn compute_sha256(path: &Path) -> Result<String, std::io::Error> {
 }
 
 async fn process_file(app: &AppHandle, path: PathBuf) {
+    // A fresh .StormReplay means the match just ended — clear the in-game flag
+    // so the map blocker stops covering the post-match / voting screen.
+    crate::on_game_ended(app);
+
     if !wait_for_stable(&path).await {
         log::warn!("File not stable, skipping: {}", path.display());
         return;

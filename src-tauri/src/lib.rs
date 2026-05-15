@@ -139,6 +139,11 @@ struct BlockerState {
     /// battlelobby read). When set, geometry changes are saved under this
     /// key in `settings.per_map`.
     active_map_hash: Option<String>,
+    /// Whether HoTS is currently in a match. Set when a battlelobby file is
+    /// written (match starting), cleared when a .StormReplay is written
+    /// (match ended). The blocker only shows in Blocking mode while true,
+    /// so it doesn't cover the menu / draft / post-match voting screen.
+    in_game: bool,
 }
 
 impl BlockerState {
@@ -147,6 +152,7 @@ impl BlockerState {
             settings,
             mode: BlockerVisualMode::Blocking,
             active_map_hash: None,
+            in_game: false,
         }
     }
 }
@@ -557,12 +563,8 @@ fn toggle_blocker_mode(app: &tauri::AppHandle) {
     apply_blocker_visual_mode(app, new_mode);
 
     if new_mode == BlockerVisualMode::Blocking {
-        let focused = game_focus::is_focused(app);
-        if !focused {
-            if let Some(w) = app.get_webview_window(BLOCKER_LABEL) {
-                let _ = w.hide();
-            }
-        }
+        // Blocking mode is gated on focus + an active match.
+        refresh_blocker_visibility(app);
     }
 
     log::info!("blocker mode toggled to {:?}", new_mode);
@@ -622,11 +624,7 @@ fn set_blocker_enabled(app: &tauri::AppHandle, enabled: bool) {
 
     if enabled {
         register_blocker_hotkey(app);
-        let focused = game_focus::is_focused(app);
-        if focused {
-            open_blocker_window(app, true);
-            apply_blocker_visual_mode(app, BlockerVisualMode::Blocking);
-        }
+        refresh_blocker_visibility(app);
     } else {
         unregister_blocker_hotkey(app);
         close_blocker_window(app);
@@ -634,20 +632,19 @@ fn set_blocker_enabled(app: &tauri::AppHandle, enabled: bool) {
     log::info!("blocker enabled={}", enabled);
 }
 
-fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
-    let (enabled, mode) = {
+/// Show the blocker only when it's enabled, in Blocking mode, HoTS is the
+/// focused window, and a match is actually in progress. Interactable mode is
+/// left alone — it stays visible so it can be repositioned at any time.
+fn refresh_blocker_visibility(app: &tauri::AppHandle) {
+    let (enabled, mode, in_game) = {
         let state = app.state::<SharedBlockerState>();
         let s = state.lock().unwrap();
-        (s.settings.enabled, s.mode)
+        (s.settings.enabled, s.mode, s.in_game)
     };
-    if !enabled {
+    if !enabled || mode == BlockerVisualMode::Interactable {
         return;
     }
-    if mode == BlockerVisualMode::Interactable {
-        // Interactable mode keeps the window visible regardless of focus.
-        return;
-    }
-    if focused {
+    if in_game && game_focus::is_focused(app) {
         if app.get_webview_window(BLOCKER_LABEL).is_none() {
             open_blocker_window(app, true);
             apply_blocker_visual_mode(app, BlockerVisualMode::Blocking);
@@ -657,6 +654,44 @@ fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
     } else if let Some(w) = app.get_webview_window(BLOCKER_LABEL) {
         let _ = w.hide();
     }
+}
+
+fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
+    if !focused && !is_game_running() {
+        // HoTS has fully exited — clear the in-game flag so the blocker won't
+        // reappear over the menu when the game is relaunched.
+        let state = app.state::<SharedBlockerState>();
+        state.lock().unwrap().in_game = false;
+    }
+    refresh_blocker_visibility(app);
+}
+
+/// Called when HoTS writes a battlelobby file — a match is starting.
+pub fn on_game_started(app: &tauri::AppHandle) {
+    {
+        let state = app.state::<SharedBlockerState>();
+        let mut s = state.lock().unwrap();
+        if s.in_game {
+            return;
+        }
+        s.in_game = true;
+    }
+    log::info!("game session: match started");
+    refresh_blocker_visibility(app);
+}
+
+/// Called when HoTS writes a .StormReplay file — the match has ended.
+pub fn on_game_ended(app: &tauri::AppHandle) {
+    {
+        let state = app.state::<SharedBlockerState>();
+        let mut s = state.lock().unwrap();
+        if !s.in_game {
+            return;
+        }
+        s.in_game = false;
+    }
+    log::info!("game session: match ended");
+    refresh_blocker_visibility(app);
 }
 
 fn deep_link_path(url: &str) -> Option<String> {
@@ -678,7 +713,7 @@ fn handle_deep_link(app: &tauri::AppHandle, url: &str) {
     });
 }
 
-fn is_game_running() -> bool {
+pub(crate) fn is_game_running() -> bool {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("pgrep")

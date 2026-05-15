@@ -46,6 +46,14 @@ pub fn start(app: tauri::AppHandle) {
         process_existing_files(&app, &hots_dir, &dumps_dir);
     }
 
+    // If HoTS is already mid-match (the app launched after the game began),
+    // start the session now so the blocker doesn't stay hidden until the
+    // next game.
+    if crate::is_game_running() && match_in_progress() {
+        log::info!("battlelobby probe: match already in progress at startup");
+        crate::on_game_started(&app);
+    }
+
     let app_clone = app.clone();
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -98,7 +106,7 @@ pub fn start(app: tauri::AppHandle) {
             }
             for path in event.paths {
                 if is_battlelobby_path(&path) {
-                    handle_file(&app_clone, &path, &dumps_dir);
+                    handle_file(&app_clone, &path, &dumps_dir, true);
                 }
             }
         }
@@ -121,6 +129,29 @@ fn hots_temp_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
+/// Whether HoTS is currently mid-match, judged from the in-progress replay
+/// staging files. HoTS writes replay.game.events continuously while a match
+/// runs but only finalizes replay.details when the match ends — so
+/// game.events being newer than details means a match is underway (or
+/// loading). Equal/older mtimes mean the last match has already finished.
+fn match_in_progress() -> bool {
+    let dir = std::env::temp_dir()
+        .join("Heroes of the Storm")
+        .join("TempWriteReplayP1");
+    let mtime = |name: &str| {
+        std::fs::metadata(dir.join(name))
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    let Some(events) = mtime("replay.game.events") else {
+        return false;
+    };
+    match mtime("replay.details") {
+        Some(details) => events > details,
+        None => true,
+    }
+}
+
 fn process_existing_files(app: &tauri::AppHandle, dir: &Path, dumps_dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -132,7 +163,7 @@ fn process_existing_files(app: &tauri::AppHandle, dir: &Path, dumps_dir: &Path) 
             process_existing_files(app, &path, dumps_dir);
         } else if is_battlelobby_path(&path) {
             log::info!("battlelobby probe: existing file at startup: {:?}", path);
-            handle_file(app, &path, dumps_dir);
+            handle_file(app, &path, dumps_dir, false);
         }
     }
 }
@@ -141,7 +172,11 @@ fn is_battlelobby_path(path: &Path) -> bool {
     path.extension().and_then(|s| s.to_str()) == Some("battlelobby")
 }
 
-fn handle_file(app: &tauri::AppHandle, path: &Path, dumps_dir: &Path) {
+// `live` is true for files seen via a watcher event (a match starting right
+// now) and false for the startup scan of a file already on disk (which may be
+// a stale battlelobby from an earlier game). Only live detections start a
+// game session.
+fn handle_file(app: &tauri::AppHandle, path: &Path, dumps_dir: &Path, live: bool) {
     log::info!("battlelobby probe: detected {:?}", path);
 
     // Brief delay so HoTS has time to finish writing.
@@ -189,6 +224,10 @@ fn handle_file(app: &tauri::AppHandle, path: &Path, dumps_dir: &Path) {
 
     if let Some(hash) = hash {
         crate::on_active_map_changed(app, hash);
+    }
+
+    if live {
+        crate::on_game_started(app);
     }
 }
 
