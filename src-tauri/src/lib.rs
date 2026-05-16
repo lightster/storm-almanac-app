@@ -94,6 +94,7 @@ const BLOCKER_LABEL: &str = "overlay-blocker";
 const BLOCKER_STORE_FILE: &str = "storm-almanac.json";
 const BLOCKER_STORE_KEY: &str = "map_blocker";
 const BLOCKER_HOTKEY: &str = "CmdOrCtrl+Shift+B";
+const DRAFT_OVERLAY_HOTKEY: &str = "CmdOrCtrl+Shift+D";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -662,7 +663,61 @@ fn refresh_blocker_visibility(app: &tauri::AppHandle) {
     }
 }
 
+fn register_draft_overlay_hotkey(app: &tauri::AppHandle) {
+    let shortcut: Shortcut = match DRAFT_OVERLAY_HOTKEY.parse() {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("invalid draft overlay hotkey: {e}");
+            return;
+        }
+    };
+    if app.global_shortcut().is_registered(shortcut.clone()) {
+        return;
+    }
+    let app_handle = app.clone();
+    let res = app
+        .global_shortcut()
+        .on_shortcut(shortcut, move |_app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                let ah = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    draft_overlay::toggle(&ah);
+                });
+            }
+        });
+    match res {
+        Ok(_) => log::info!("registered draft overlay hotkey {DRAFT_OVERLAY_HOTKEY}"),
+        Err(e) => log::error!("register draft overlay hotkey failed: {e}"),
+    }
+}
+
+fn unregister_draft_overlay_hotkey(app: &tauri::AppHandle) {
+    let shortcut: Shortcut = match DRAFT_OVERLAY_HOTKEY.parse() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if app.global_shortcut().is_registered(shortcut.clone()) {
+        let _ = app.global_shortcut().unregister(shortcut);
+    }
+}
+
+fn set_draft_overlay_enabled(app: &tauri::AppHandle, enabled: bool) {
+    let mut cfg = load_config(app);
+    cfg.draft_overlay_enabled = enabled;
+    save_config(app, &cfg);
+    if enabled {
+        register_draft_overlay_hotkey(app);
+    } else {
+        unregister_draft_overlay_hotkey(app);
+        draft_overlay::close_window(app);
+    }
+    log::info!("draft overlay enabled={enabled}");
+}
+
 fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
+    if !focused {
+        draft_overlay::close_window(app);
+    }
     if !focused && !is_game_running() {
         // HoTS has fully exited — clear the in-game flag so the blocker won't
         // reappear over the menu when the game is relaunched.
@@ -962,6 +1017,11 @@ pub fn run() {
             let enable_blocker = CheckMenuItemBuilder::with_id("enable_blocker", "Enable Map Blocker")
                 .checked(blocker_enabled_at_startup)
                 .build(app)?;
+            let draft_enabled_at_startup = load_config(app.handle()).draft_overlay_enabled;
+            let enable_draft =
+                CheckMenuItemBuilder::with_id("enable_draft_overlay", "Enable Draft Overlay")
+                    .checked(draft_enabled_at_startup)
+                    .build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Almanac").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&open_website)
@@ -971,6 +1031,7 @@ pub fn run() {
                 .item(&rescan)
                 .separator()
                 .item(&enable_blocker)
+                .item(&enable_draft)
                 .item(&toggle_overlay)
                 .separator()
                 .item(&quit)
@@ -991,6 +1052,7 @@ pub fn run() {
             let update_flag_menu = update_available.clone();
             let check_update_menu = check_update.clone();
             let enable_blocker_menu = enable_blocker.clone();
+            let enable_draft_menu = enable_draft.clone();
 
             let _tray = TrayIconBuilder::new()
                 .icon(tray_icon)
@@ -1028,6 +1090,11 @@ pub fn run() {
                         let new_enabled = !currently_enabled;
                         set_blocker_enabled(app, new_enabled);
                         let _ = enable_blocker_menu.set_checked(new_enabled);
+                    } else if event.id() == "enable_draft_overlay" {
+                        let cfg = load_config(app);
+                        let new_enabled = !cfg.draft_overlay_enabled;
+                        set_draft_overlay_enabled(app, new_enabled);
+                        let _ = enable_draft_menu.set_checked(new_enabled);
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -1096,6 +1163,9 @@ pub fn run() {
             // and spawn a subscriber that reacts to game-focus changes.
             if blocker_enabled_at_startup {
                 register_blocker_hotkey(app.handle());
+            }
+            if load_config(app.handle()).draft_overlay_enabled {
+                register_draft_overlay_hotkey(app.handle());
             }
             let focus_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
