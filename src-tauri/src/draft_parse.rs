@@ -8,7 +8,7 @@ fn normalize(s: &str) -> String {
         .collect()
 }
 
-/// Levenshtein edit distance between two byte-equal-length-agnostic strings.
+/// Levenshtein edit distance between two strings.
 fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -32,19 +32,25 @@ pub fn match_hero(ocr_text: &str, hero_list: &[String]) -> Option<String> {
     if target.is_empty() {
         return None;
     }
+    let normalized: Vec<String> = hero_list.iter().map(|h| normalize(h)).collect();
     // Exact normalized match.
-    if let Some(h) = hero_list.iter().find(|h| normalize(h) == target) {
-        return Some(h.clone());
+    if let Some(i) = normalized.iter().position(|n| *n == target) {
+        return Some(hero_list[i].clone());
     }
-    // Closest within an edit distance of 1 (single OCR error).
-    let mut best: Option<(usize, &String)> = None;
-    for h in hero_list {
-        let d = levenshtein(&normalize(h), &target);
-        if d <= 1 && best.map(|(bd, _)| d < bd).unwrap_or(true) {
-            best = Some((d, h));
-        }
-    }
-    best.map(|(_, h)| h.clone())
+    // Closest hero within an edit distance of 1 (single OCR error).
+    hero_list
+        .iter()
+        .zip(normalized.iter())
+        .filter_map(|(h, n)| {
+            let d = levenshtein(n, &target);
+            if d <= 1 {
+                Some((d, h))
+            } else {
+                None
+            }
+        })
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, h)| h.clone())
 }
 
 #[cfg(test)]
@@ -84,5 +90,15 @@ mod tests {
     fn no_match_returns_none() {
         assert_eq!(match_hero("Xyzzy", &heroes()), None);
         assert_eq!(match_hero("", &heroes()), None);
+    }
+
+    #[test]
+    fn whitespace_only_returns_none() {
+        assert_eq!(match_hero("   ", &heroes()), None);
+    }
+
+    #[test]
+    fn empty_hero_list_returns_none() {
+        assert_eq!(match_hero("Genji", &[]), None);
     }
 }
