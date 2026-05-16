@@ -1,12 +1,18 @@
 mod autostart;
 mod battle_lobby_probe;
 mod config;
+mod draft_overlay;
+mod draft_parse;
+mod draft_types;
 mod game_focus;
 mod game_session;
 mod input_recorder;
+mod ocr;
+mod screen_capture;
 mod state;
 mod uploader;
 mod watcher;
+mod win_rates;
 
 use config::{load_config, load_history, load_known_hashes, save_known_hashes, save_config, AppConfig};
 use serde::{Deserialize, Serialize};

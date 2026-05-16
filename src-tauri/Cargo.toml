@@ -44,10 +44,15 @@ macos-accessibility-client = "0.0.2"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 windows = { version = "0.59", features = [
-    "Win32_UI_Input",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_LibraryLoader",
+    "Foundation",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
 ] }
