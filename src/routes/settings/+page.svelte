@@ -7,6 +7,7 @@
 	let autostart = $state(false);
 	let startMinimized = $state(false);
 	let inputRecordingEnabled = $state(false);
+	let playerBattletag = $state('');
 	let inputPermission = $state(true);
 	let autostartLoaded = $state(false);
 	let autostartError = $state('');
@@ -19,6 +20,7 @@
 		autostart = config.autostart;
 		startMinimized = config.startMinimized ?? false;
 		inputRecordingEnabled = config.inputRecordingEnabled ?? false;
+		playerBattletag = config.playerBattletag ?? '';
 		loaded = true;
 
 		try {
@@ -62,7 +64,7 @@
 			autostartError = `Failed to update autostart: ${e}`;
 		}
 
-		const newConfig = { watchDir, autostart, startMinimized, inputRecordingEnabled };
+		const newConfig = { watchDir, autostart, startMinimized, inputRecordingEnabled, playerBattletag };
 		await invoke('save_config_cmd', { config: newConfig });
 
 		saved = true;
@@ -161,6 +163,20 @@
 					{#if !inputPermission}
 						<p class="text-xs text-amber-400 mt-1">Requires Accessibility permission in System Settings</p>
 					{/if}
+				</div>
+
+				<div>
+					<label for="player-battletag" class="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">
+						Your BattleTag (Name#1234)
+					</label>
+					<input
+						id="player-battletag"
+						type="text"
+						bind:value={playerBattletag}
+						placeholder="Name#1234"
+						class="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-blue-500 transition-colors"
+					/>
+					<p class="text-xs text-zinc-500 mt-1">Used to identify your personal win rates in the ARAM draft overlay</p>
 				</div>
 
 				<button
