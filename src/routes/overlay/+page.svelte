@@ -8,6 +8,8 @@
 	let counter = $state(0);
 	/** @type {'blocking' | 'interactable'} */
 	let blockerMode = $state('blocking');
+	/** @type {{ hero: string, rect: {x:number,y:number,width:number,height:number}, win_rates: {overall: number|null, player: number|null, player_games: number|null} }[]} */
+	let draftHeroes = $state([]);
 	let flashing = $state(false);
 	/** @type {(() => void) | undefined} */
 	let unlisten;
@@ -16,9 +18,9 @@
 
 	onMount(async () => {
 		const m = page.url.searchParams.get('mode');
-		mode = m === 'clickthrough' || m === 'blocker' ? m : 'interactive';
+		mode = m === 'clickthrough' || m === 'blocker' || m === 'draft' ? m : 'interactive';
 
-		if (mode === 'clickthrough') {
+		if (mode === 'clickthrough' || mode === 'draft') {
 			try {
 				await getCurrentWindow().setIgnoreCursorEvents(true);
 			} catch (e) {
@@ -31,6 +33,15 @@
 				const next = event?.payload;
 				if (next === 'blocking' || next === 'interactable') {
 					blockerMode = next;
+				}
+			});
+		}
+
+		if (mode === 'draft') {
+			unlisten = await listen('draft://update', (event) => {
+				const payload = event?.payload;
+				if (payload && Array.isArray(payload.heroes)) {
+					draftHeroes = payload.heroes;
 				}
 			});
 		}
@@ -69,6 +80,18 @@
 		} catch (e) {
 			console.error('startResizeDragging failed', e);
 		}
+	}
+
+	/** @param {number|null} wr */
+	function fmt(wr) {
+		return wr === null ? '—' : wr.toFixed(0) + '%';
+	}
+	/** @param {number|null} wr */
+	function wrClass(wr) {
+		if (wr === null) return 'neutral';
+		if (wr >= 55) return 'good';
+		if (wr < 45) return 'bad';
+		return 'neutral';
 	}
 
 	/** @param {Event} e */
@@ -110,7 +133,7 @@
 		<div class="title">CLICK-THROUGH</div>
 		<div class="hint">try clicking the desktop behind me</div>
 	</div>
-{:else}
+{:else if mode === 'blocker'}
 	<div
 		class="blocker {blockerMode} {flashing ? 'flash' : ''}"
 		onmousedown={onBlockerMouseDown}
@@ -188,6 +211,22 @@
 			></div>
 		{/if}
 	</div>
+{:else if mode === 'draft'}
+	{#each draftHeroes as h (h.hero + h.rect.x + h.rect.y)}
+		<div
+			class="draft-label"
+			style="left: {h.rect.x}px; top: {h.rect.y + h.rect.height + 2}px;"
+		>
+			<span class="wr overall {wrClass(h.win_rates.overall)}">
+				{fmt(h.win_rates.overall)}
+			</span>
+			{#if h.win_rates.player !== null}
+				<span class="wr player {wrClass(h.win_rates.player)}">
+					you {fmt(h.win_rates.player)}
+				</span>
+			{/if}
+		</div>
+	{/each}
 {/if}
 
 <style>
@@ -380,4 +419,24 @@
 		height: 10px;
 		cursor: sw-resize;
 	}
+
+	.draft-label {
+		position: absolute;
+		display: flex;
+		gap: 4px;
+		font-family: 'DM Sans', system-ui, sans-serif;
+		font-size: 12px;
+		font-weight: 700;
+		pointer-events: none;
+		white-space: nowrap;
+	}
+	.wr {
+		padding: 1px 5px;
+		border-radius: 5px;
+		background: rgba(0, 0, 0, 0.8);
+	}
+	.wr.good { color: #4ade80; }
+	.wr.bad { color: #f87171; }
+	.wr.neutral { color: #e5e7eb; }
+	.wr.player { background: rgba(20, 30, 60, 0.9); }
 </style>
