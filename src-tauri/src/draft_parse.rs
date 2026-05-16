@@ -1,5 +1,7 @@
 //! Pure parsing logic: OCR lines -> structured draft.
 
+use crate::draft_types::{Draft, DraftHero, DraftPlayer, OcrLine};
+
 /// Normalize a name for comparison: lowercase, keep only ASCII alphanumerics.
 fn normalize(s: &str) -> String {
     s.chars()
@@ -53,9 +55,78 @@ pub fn match_hero(ocr_text: &str, hero_list: &[String]) -> Option<String> {
         .map(|(_, h)| h.clone())
 }
 
+/// Maximum horizontal gap (px) between hero labels considered the same column.
+const COLUMN_GAP: f64 = 140.0;
+
+/// Parse OCR lines into a structured draft.
+pub fn parse_draft(lines: &[OcrLine], hero_list: &[String]) -> Draft {
+    struct HeroLabel<'a> {
+        hero: String,
+        line: &'a OcrLine,
+    }
+    let mut hero_labels: Vec<HeroLabel> = lines
+        .iter()
+        .filter_map(|l| match_hero(&l.text, hero_list).map(|hero| HeroLabel { hero, line: l }))
+        .collect();
+    if hero_labels.is_empty() {
+        return Draft { players: vec![] };
+    }
+
+    hero_labels.sort_by(|a, b| {
+        a.line.rect.center_x().partial_cmp(&b.line.rect.center_x()).unwrap()
+    });
+    let mut columns: Vec<Vec<&HeroLabel>> = vec![vec![&hero_labels[0]]];
+    for label in &hero_labels[1..] {
+        let last_col = columns.last_mut().unwrap();
+        let last_x = last_col.last().unwrap().line.rect.center_x();
+        if (label.line.rect.center_x() - last_x).abs() <= COLUMN_GAP {
+            last_col.push(label);
+        } else {
+            columns.push(vec![label]);
+        }
+    }
+
+    let mut players: Vec<DraftPlayer> = Vec::new();
+    for col in columns {
+        let col_x = col.iter().map(|l| l.line.rect.center_x()).sum::<f64>() / col.len() as f64;
+        let top_hero_y = col
+            .iter()
+            .map(|l| l.line.rect.y)
+            .fold(f64::INFINITY, f64::min);
+
+        let name_line = lines
+            .iter()
+            .filter(|l| match_hero(&l.text, hero_list).is_none())
+            .filter(|l| l.rect.y < top_hero_y)
+            .filter(|l| (l.rect.center_x() - col_x).abs() <= COLUMN_GAP)
+            .min_by(|a, b| {
+                (top_hero_y - a.rect.y)
+                    .partial_cmp(&(top_hero_y - b.rect.y))
+                    .unwrap()
+            });
+
+        let (name, name_rect) = match name_line {
+            Some(l) => (l.text.clone(), l.rect),
+            None => continue,
+        };
+
+        let mut heroes: Vec<DraftHero> = col
+            .iter()
+            .map(|l| DraftHero { hero: l.hero.clone(), rect: l.line.rect })
+            .collect();
+        heroes.sort_by(|a, b| a.rect.y.partial_cmp(&b.rect.y).unwrap());
+
+        players.push(DraftPlayer { name, name_rect, heroes });
+    }
+
+    players.sort_by(|a, b| a.name_rect.center_x().partial_cmp(&b.name_rect.center_x()).unwrap());
+    Draft { players }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::draft_types::Rect;
 
     fn heroes() -> Vec<String> {
         ["Nazeebo", "Li-Ming", "The Butcher", "D.Va", "Genji", "Nova"]
@@ -100,5 +171,52 @@ mod tests {
     #[test]
     fn empty_hero_list_returns_none() {
         assert_eq!(match_hero("Genji", &[]), None);
+    }
+
+    fn line(text: &str, x: f64, y: f64) -> OcrLine {
+        OcrLine {
+            text: text.to_string(),
+            rect: Rect { x, y, width: 80.0, height: 18.0 },
+        }
+    }
+
+    #[test]
+    fn parses_two_columns_with_names_and_heroes() {
+        let lines = vec![
+            line("Togo99", 100.0, 200.0),
+            line("Nazeebo", 100.0, 260.0),
+            line("Genji", 100.0, 320.0),
+            line("Nova", 100.0, 380.0),
+            line("Serverus", 400.0, 200.0),
+            line("Li-Ming", 400.0, 260.0),
+            line("D.Va", 400.0, 320.0),
+            line("The Butcher", 400.0, 380.0),
+            line("CHOOSE A HERO", 250.0, 50.0),
+        ];
+        let draft = parse_draft(&lines, &heroes());
+        assert_eq!(draft.players.len(), 2);
+        assert_eq!(draft.players[0].name, "Togo99");
+        assert_eq!(draft.players[0].heroes.len(), 3);
+        assert_eq!(draft.players[0].heroes[0].hero, "Nazeebo");
+        assert_eq!(draft.players[1].name, "Serverus");
+        assert_eq!(draft.players[1].heroes[2].hero, "The Butcher");
+    }
+
+    #[test]
+    fn columns_sorted_left_to_right() {
+        let lines = vec![
+            line("Right", 500.0, 200.0),
+            line("Genji", 500.0, 260.0),
+            line("Left", 100.0, 200.0),
+            line("Nova", 100.0, 260.0),
+        ];
+        let draft = parse_draft(&lines, &heroes());
+        assert_eq!(draft.players[0].name, "Left");
+        assert_eq!(draft.players[1].name, "Right");
+    }
+
+    #[test]
+    fn empty_input_yields_no_players() {
+        assert_eq!(parse_draft(&[], &heroes()).players.len(), 0);
     }
 }
