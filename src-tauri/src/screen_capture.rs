@@ -21,7 +21,16 @@ pub fn capture_primary_monitor() -> Result<RgbaImage, String> {
             return Err("GetDC failed".into());
         }
         let mem_dc = CreateCompatibleDC(Some(screen_dc));
+        if mem_dc.is_invalid() {
+            ReleaseDC(None, screen_dc);
+            return Err("CreateCompatibleDC failed".into());
+        }
         let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+        if bitmap.is_invalid() {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(None, screen_dc);
+            return Err("CreateCompatibleBitmap failed".into());
+        }
         let old = SelectObject(mem_dc, bitmap.into());
 
         let blt = BitBlt(mem_dc, 0, 0, width, height, Some(screen_dc), 0, 0, SRCCOPY);
