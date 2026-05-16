@@ -72,15 +72,18 @@ pub fn parse_draft(lines: &[OcrLine], hero_list: &[String]) -> Draft {
         return Draft { players: vec![] };
     }
 
+    // Screen coordinates are always finite, so partial_cmp never returns None.
     hero_labels.sort_by(|a, b| {
         a.line.rect.center_x().partial_cmp(&b.line.rect.center_x()).unwrap()
     });
     let mut columns: Vec<Vec<&HeroLabel>> = vec![vec![&hero_labels[0]]];
     for label in &hero_labels[1..] {
-        let last_col = columns.last_mut().unwrap();
-        let last_x = last_col.last().unwrap().line.rect.center_x();
-        if (label.line.rect.center_x() - last_x).abs() <= COLUMN_GAP {
-            last_col.push(label);
+        let col = columns.last_mut().unwrap();
+        // Compare to the column's anchor (first) hero, not the previous one,
+        // so a column can't "creep" wider than COLUMN_GAP via small steps.
+        let anchor_x = col[0].line.rect.center_x();
+        if (label.line.rect.center_x() - anchor_x).abs() <= COLUMN_GAP {
+            col.push(label);
         } else {
             columns.push(vec![label]);
         }
@@ -218,5 +221,30 @@ mod tests {
     #[test]
     fn empty_input_yields_no_players() {
         assert_eq!(parse_draft(&[], &heroes()).players.len(), 0);
+    }
+
+    #[test]
+    fn column_without_a_name_line_is_dropped() {
+        // The x=400 column has a hero but no name line above it.
+        let lines = vec![
+            line("Togo99", 100.0, 200.0),
+            line("Nova", 100.0, 260.0),
+            line("Genji", 400.0, 260.0),
+        ];
+        let draft = parse_draft(&lines, &heroes());
+        assert_eq!(draft.players.len(), 1);
+        assert_eq!(draft.players[0].name, "Togo99");
+    }
+
+    #[test]
+    fn column_with_fewer_than_three_heroes_is_kept() {
+        let lines = vec![
+            line("Togo99", 100.0, 200.0),
+            line("Nova", 100.0, 260.0),
+            line("Genji", 100.0, 320.0),
+        ];
+        let draft = parse_draft(&lines, &heroes());
+        assert_eq!(draft.players.len(), 1);
+        assert_eq!(draft.players[0].heroes.len(), 2);
     }
 }
