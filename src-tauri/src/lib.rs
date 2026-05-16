@@ -1175,6 +1175,7 @@ pub fn run() {
             toggle_overlay_pair,
             reveal_path,
             clear_webview_data,
+            screen_capture::dev_capture_screen,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
