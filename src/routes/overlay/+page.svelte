@@ -39,12 +39,6 @@
 		}
 
 		if (mode === 'draft') {
-			unlisten = await listen('draft://update', (event) => {
-				const payload = event?.payload;
-				if (payload && Array.isArray(payload.heroes)) {
-					draftHeroes = payload.heroes;
-				}
-			});
 			try {
 				const data = await invoke('get_draft_overlay_data');
 				if (data && Array.isArray(data.heroes)) {

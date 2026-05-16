@@ -1,14 +1,16 @@
 //! Primary-monitor screen capture (Windows GDI).
 
-use image::RgbaImage;
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetDC,
     ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
 };
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
 /// Capture the primary monitor as an RGBA image (screen-pixel dimensions).
-pub fn capture_primary_monitor() -> Result<RgbaImage, String> {
+#[cfg(windows)]
+pub fn capture_primary_monitor() -> Result<image::RgbaImage, String> {
     unsafe {
         let width = GetSystemMetrics(SM_CXSCREEN);
         let height = GetSystemMetrics(SM_CYSCREEN);
@@ -71,9 +73,15 @@ pub fn capture_primary_monitor() -> Result<RgbaImage, String> {
         for px in buf.chunks_exact_mut(4) {
             px.swap(0, 2);
         }
-        RgbaImage::from_raw(width as u32, height as u32, buf)
+        image::RgbaImage::from_raw(width as u32, height as u32, buf)
             .ok_or_else(|| "image buffer size mismatch".into())
     }
+}
+
+/// Screen capture is only supported on Windows.
+#[cfg(not(windows))]
+pub fn capture_primary_monitor() -> Result<image::RgbaImage, String> {
+    Err("screen capture is only supported on Windows".into())
 }
 
 /// DEV-ONLY: capture the screen and save it to the temp dir for inspection.

@@ -16,9 +16,16 @@ impl Rect {
     pub fn center_x(&self) -> f64 {
         self.x + self.width / 2.0
     }
-    /// Vertical centre of the rect.
-    pub fn center_y(&self) -> f64 {
-        self.y + self.height / 2.0
+
+    /// Divide all coordinates by `factor` — converts physical pixels to the
+    /// logical (CSS) pixels the overlay window renders in.
+    pub fn descale(&self, factor: f64) -> Rect {
+        Rect {
+            x: self.x / factor,
+            y: self.y / factor,
+            width: self.width / factor,
+            height: self.height / factor,
+        }
     }
 }
 

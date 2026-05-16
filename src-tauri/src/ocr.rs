@@ -1,13 +1,18 @@
 //! OCR via Windows.Media.Ocr.
 
-use crate::draft_types::{OcrLine, Rect};
-use image::RgbaImage;
+use crate::draft_types::OcrLine;
+#[cfg(windows)]
+use crate::draft_types::Rect;
+#[cfg(windows)]
 use windows::Graphics::Imaging::{BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap};
+#[cfg(windows)]
 use windows::Media::Ocr::OcrEngine;
+#[cfg(windows)]
 use windows::Storage::Streams::DataWriter;
 
 /// Run OCR over an image, returning one entry per recognized text line.
-pub fn recognize_lines(img: &RgbaImage) -> Result<Vec<OcrLine>, String> {
+#[cfg(windows)]
+pub fn recognize_lines(img: &image::RgbaImage) -> Result<Vec<OcrLine>, String> {
     let (w, h) = (img.width(), img.height());
 
     let writer = DataWriter::new().map_err(|e| e.to_string())?;
@@ -58,6 +63,12 @@ pub fn recognize_lines(img: &RgbaImage) -> Result<Vec<OcrLine>, String> {
         }
     }
     Ok(out)
+}
+
+/// OCR is only supported on Windows.
+#[cfg(not(windows))]
+pub fn recognize_lines(_img: &image::RgbaImage) -> Result<Vec<OcrLine>, String> {
+    Err("OCR is only supported on Windows".into())
 }
 
 /// DEV-ONLY: capture the screen, OCR it, and return every recognized line.

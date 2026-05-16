@@ -105,6 +105,13 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         }
     }
 
+    let scale = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+
     let mut heroes: Vec<DraftOverlayHero> = Vec::new();
     for player in &draft.players {
         let player_table = personal.get(&player.name);
@@ -112,7 +119,7 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
             let player_wr = player_table.and_then(|t| t.get(&hero.hero).copied());
             heroes.push(DraftOverlayHero {
                 hero: hero.hero.clone(),
-                rect: hero.rect,
+                rect: hero.rect.descale(scale),
                 win_rates: HeroWinRates {
                     overall: base_table.overall.get(&hero.hero).copied(),
                     player: player_wr.map(|(wr, _)| wr),
