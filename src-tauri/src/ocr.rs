@@ -1,1 +1,70 @@
 //! OCR via Windows.Media.Ocr.
+
+use crate::draft_types::{OcrLine, Rect};
+use image::RgbaImage;
+use windows::Graphics::Imaging::{BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap};
+use windows::Media::Ocr::OcrEngine;
+use windows::Storage::Streams::DataWriter;
+
+/// Run OCR over an image, returning one entry per recognized text line.
+pub fn recognize_lines(img: &RgbaImage) -> Result<Vec<OcrLine>, String> {
+    let (w, h) = (img.width(), img.height());
+
+    let writer = DataWriter::new().map_err(|e| e.to_string())?;
+    let mut bgra = Vec::with_capacity((w * h * 4) as usize);
+    for px in img.pixels() {
+        bgra.extend_from_slice(&[px[2], px[1], px[0], px[3]]); // RGBA -> BGRA
+    }
+    writer.WriteBytes(&bgra).map_err(|e| e.to_string())?;
+    let buffer = writer.DetachBuffer().map_err(|e| e.to_string())?;
+    let bitmap = SoftwareBitmap::CreateCopyWithAlphaFromBuffer(
+        &buffer,
+        BitmapPixelFormat::Bgra8,
+        w as i32,
+        h as i32,
+        BitmapAlphaMode::Premultiplied,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let engine = OcrEngine::TryCreateFromUserProfileLanguages()
+        .map_err(|e| e.to_string())?;
+    let result = engine
+        .RecognizeAsync(&bitmap)
+        .map_err(|e| e.to_string())?
+        .get()
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for line in result.Lines().map_err(|e| e.to_string())? {
+        let text = line.Text().map_err(|e| e.to_string())?.to_string();
+        let mut x0 = f64::INFINITY;
+        let mut y0 = f64::INFINITY;
+        let mut x1 = f64::NEG_INFINITY;
+        let mut y1 = f64::NEG_INFINITY;
+        for word in line.Words().map_err(|e| e.to_string())? {
+            let r = word.BoundingRect().map_err(|e| e.to_string())?;
+            x0 = x0.min(r.X as f64);
+            y0 = y0.min(r.Y as f64);
+            x1 = x1.max((r.X + r.Width) as f64);
+            y1 = y1.max((r.Y + r.Height) as f64);
+        }
+        if x0.is_finite() {
+            out.push(OcrLine {
+                text,
+                rect: Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 },
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// DEV-ONLY: capture the screen, OCR it, and return every recognized line.
+#[tauri::command]
+pub fn dev_ocr_screen() -> Result<Vec<(String, f64, f64)>, String> {
+    let img = crate::screen_capture::capture_primary_monitor()?;
+    let lines = recognize_lines(&img)?;
+    Ok(lines
+        .into_iter()
+        .map(|l| (l.text, l.rect.x, l.rect.y))
+        .collect())
+}

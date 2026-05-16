@@ -1176,6 +1176,7 @@ pub fn run() {
             reveal_path,
             clear_webview_data,
             screen_capture::dev_capture_screen,
+            ocr::dev_ocr_screen,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
