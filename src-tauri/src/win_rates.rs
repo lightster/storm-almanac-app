@@ -148,6 +148,9 @@ pub async fn search_players(name: &str) -> Result<Vec<String>, String> {
         .send()
         .await
         .map_err(|e| format!("player search failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("player search HTTP {}", resp.status()));
+    }
     let rows: Vec<SearchRow> = resp
         .json()
         .await
