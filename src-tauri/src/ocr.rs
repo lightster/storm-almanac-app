@@ -13,7 +13,9 @@ pub fn recognize_lines(img: &RgbaImage) -> Result<Vec<OcrLine>, String> {
     let writer = DataWriter::new().map_err(|e| e.to_string())?;
     let mut bgra = Vec::with_capacity((w * h * 4) as usize);
     for px in img.pixels() {
-        bgra.extend_from_slice(&[px[2], px[1], px[0], px[3]]); // RGBA -> BGRA
+        // RGBA -> BGRA. Alpha is forced opaque: GDI screen capture leaves the
+        // alpha byte unset, and OCR needs a non-transparent image.
+        bgra.extend_from_slice(&[px[2], px[1], px[0], 255]);
     }
     writer.WriteBytes(&bgra).map_err(|e| e.to_string())?;
     let buffer = writer.DetachBuffer().map_err(|e| e.to_string())?;
@@ -22,7 +24,7 @@ pub fn recognize_lines(img: &RgbaImage) -> Result<Vec<OcrLine>, String> {
         BitmapPixelFormat::Bgra8,
         w as i32,
         h as i32,
-        BitmapAlphaMode::Premultiplied,
+        BitmapAlphaMode::Straight,
     )
     .map_err(|e| e.to_string())?;
 
