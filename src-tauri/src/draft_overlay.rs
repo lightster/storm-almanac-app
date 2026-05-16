@@ -3,9 +3,12 @@
 use crate::draft_types::{DraftOverlayHero, DraftOverlayPayload, HeroWinRates};
 use crate::win_rates;
 use std::collections::HashMap;
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const DRAFT_LABEL: &str = "overlay-draft";
+
+/// Holds the most recent draft payload for the overlay window to pull on mount.
+pub type SharedDraftPayload = std::sync::Mutex<Option<DraftOverlayPayload>>;
 
 /// Open the full-screen transparent click-through overlay window.
 fn open_window(app: &tauri::AppHandle) {
@@ -119,13 +122,25 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         }
     }
 
+    // Store the payload first, then open the window. The overlay pulls the
+    // data via the get_draft_overlay_data command once its UI has mounted,
+    // so there is no timing race against webview load.
+    {
+        let state = app.state::<SharedDraftPayload>();
+        *state.lock().unwrap() = Some(DraftOverlayPayload { heroes });
+    }
     let app2 = app.clone();
     app.run_on_main_thread(move || open_window(&app2))
         .map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(250));
-    app.emit_to(DRAFT_LABEL, "draft://update", DraftOverlayPayload { heroes })
-        .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// The overlay window calls this on mount to fetch the latest draft data.
+#[tauri::command]
+pub fn get_draft_overlay_data(
+    state: tauri::State<'_, SharedDraftPayload>,
+) -> Option<DraftOverlayPayload> {
+    state.lock().unwrap().clone()
 }
 
 /// Hotkey handler: if the overlay is open, dismiss it; else run the pipeline.

@@ -997,6 +997,7 @@ pub fn run() {
             app.manage(UploadChannels::default());
             app.manage(SharedRecordingState::default());
             app.manage(game_session::RecorderHolder::default());
+            app.manage(draft_overlay::SharedDraftPayload::default());
 
             // Map blocker state — load persisted settings before tray builds
             // (the tray's "Enable Map Blocker" item reflects the saved flag).
@@ -1247,6 +1248,7 @@ pub fn run() {
             clear_webview_data,
             screen_capture::dev_capture_screen,
             ocr::dev_ocr_screen,
+            draft_overlay::get_draft_overlay_data,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

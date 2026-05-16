@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { listen } from '@tauri-apps/api/event';
+	import { invoke } from '@tauri-apps/api/core';
 	import { page } from '$app/state';
 
 	let mode = $state('interactive');
@@ -44,6 +45,14 @@
 					draftHeroes = payload.heroes;
 				}
 			});
+			try {
+				const data = await invoke('get_draft_overlay_data');
+				if (data && Array.isArray(data.heroes)) {
+					draftHeroes = data.heroes;
+				}
+			} catch (e) {
+				console.error('get_draft_overlay_data failed', e);
+			}
 		}
 	});
 
