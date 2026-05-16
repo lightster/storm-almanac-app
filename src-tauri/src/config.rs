@@ -15,6 +15,13 @@ pub struct AppConfig {
     pub start_minimized: bool,
     #[serde(default)]
     pub input_recording_enabled: bool,
+    /// The user's own full battletag ("Name#1234"), used to look up their
+    /// personal ARAM win rates in the draft overlay.
+    #[serde(default)]
+    pub player_battletag: String,
+    /// Whether the ARAM draft overlay hotkey is active.
+    #[serde(default)]
+    pub draft_overlay_enabled: bool,
 }
 
 impl Default for AppConfig {
@@ -24,6 +31,8 @@ impl Default for AppConfig {
             autostart: false,
             start_minimized: false,
             input_recording_enabled: false,
+            player_battletag: String::new(),
+            draft_overlay_enabled: false,
         }
     }
 }
@@ -96,4 +105,34 @@ pub fn save_known_hashes(app: &tauri::AppHandle, hashes: &HashSet<String>) {
     let val = serde_json::to_value(hashes).expect("failed to serialize known hashes");
     store.set("knownHashes", val);
     let _ = store.save();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn player_battletag_defaults_empty() {
+        assert_eq!(AppConfig::default().player_battletag, "");
+    }
+
+    #[test]
+    fn player_battletag_survives_round_trip() {
+        let mut c = AppConfig::default();
+        c.player_battletag = "lightster#1173".to_string();
+        let json = serde_json::to_value(&c).unwrap();
+        let back: AppConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.player_battletag, "lightster#1173");
+    }
+
+    #[test]
+    fn missing_battletag_in_stored_json_deserializes_to_empty() {
+        // Configs saved before this field existed must still load.
+        let old = serde_json::json!({
+            "watchDir": "/x", "autostart": false,
+            "startMinimized": false, "inputRecordingEnabled": false
+        });
+        let c: AppConfig = serde_json::from_value(old).unwrap();
+        assert_eq!(c.player_battletag, "");
+    }
 }
