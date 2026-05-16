@@ -74,37 +74,9 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
-    let own_battletag = {
-        let cfg = crate::config::load_config(app);
-        cfg.player_battletag
-    };
-    let own_name_part = win_rates::battletag_name_part(&own_battletag).to_string();
+    let own_battletag = crate::config::load_config(app).player_battletag;
 
-    let mut personal: HashMap<String, HashMap<String, (f64, u32)>> = HashMap::new();
-    for player in &draft.players {
-        let battletag = if !own_name_part.is_empty()
-            && player.name.eq_ignore_ascii_case(&own_name_part)
-        {
-            Some(own_battletag.clone())
-        } else {
-            match tauri::async_runtime::block_on(win_rates::search_players(&player.name)) {
-                Ok(cands) => win_rates::resolve_unique(&player.name, &cands),
-                Err(e) => {
-                    log::warn!("player search failed for {}: {e}", player.name);
-                    None
-                }
-            }
-        };
-        if let Some(bt) = battletag {
-            match tauri::async_runtime::block_on(win_rates::fetch_draft(Some(&bt))) {
-                Ok(resp) => {
-                    personal.insert(player.name.clone(), win_rates::build_table(&resp).player);
-                }
-                Err(e) => log::warn!("draft fetch failed for {bt}: {e}"),
-            }
-        }
-    }
-
+    // Physical-pixel OCR rects -> logical pixels for the overlay window.
     let scale = app
         .primary_monitor()
         .ok()
@@ -114,12 +86,42 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
 
     let mut heroes: Vec<DraftOverlayHero> = Vec::new();
     for player in &draft.players {
-        let player_table = personal.get(&player.name);
+        // Resolve this column's player to a backend battletag.
+        let battletag: Option<String> = if player.is_self {
+            if own_battletag.is_empty() {
+                None
+            } else {
+                Some(own_battletag.clone())
+            }
+        } else {
+            match tauri::async_runtime::block_on(win_rates::search_players(&player.name)) {
+                Ok(cands) => win_rates::resolve_unique(&player.name, &cands),
+                Err(e) => {
+                    log::warn!("player search failed for {}: {e}", player.name);
+                    None
+                }
+            }
+        };
+
+        // Fetch that player's per-hero ARAM win rates, if resolved.
+        let player_table: Option<HashMap<String, (f64, u32)>> = match battletag {
+            Some(bt) => match tauri::async_runtime::block_on(win_rates::fetch_draft(Some(&bt))) {
+                Ok(resp) => Some(win_rates::build_table(&resp).player),
+                Err(e) => {
+                    log::warn!("draft fetch failed for {bt}: {e}");
+                    None
+                }
+            },
+            None => None,
+        };
+
         for hero in &player.heroes {
-            let player_wr = player_table.and_then(|t| t.get(&hero.hero).copied());
+            let player_wr = player_table.as_ref().and_then(|t| t.get(&hero.hero).copied());
             heroes.push(DraftOverlayHero {
                 hero: hero.hero.clone(),
                 rect: hero.rect.descale(scale),
+                player_name: player.name.clone(),
+                is_self: player.is_self,
                 win_rates: HeroWinRates {
                     overall: base_table.overall.get(&hero.hero).copied(),
                     player: player_wr.map(|(wr, _)| wr),

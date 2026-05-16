@@ -119,10 +119,14 @@ pub fn parse_draft(lines: &[OcrLine], hero_list: &[String]) -> Draft {
             .collect();
         heroes.sort_by(|a, b| a.rect.y.partial_cmp(&b.rect.y).unwrap());
 
-        players.push(DraftPlayer { name, name_rect, heroes });
+        players.push(DraftPlayer { name, name_rect, heroes, is_self: false });
     }
 
     players.sort_by(|a, b| a.name_rect.center_x().partial_cmp(&b.name_rect.center_x()).unwrap());
+    if !players.is_empty() {
+        let mid = players.len() / 2;
+        players[mid].is_self = true;
+    }
     Draft { players }
 }
 
@@ -246,5 +250,22 @@ mod tests {
         let draft = parse_draft(&lines, &heroes());
         assert_eq!(draft.players.len(), 1);
         assert_eq!(draft.players[0].heroes.len(), 2);
+    }
+
+    #[test]
+    fn middle_column_is_marked_self() {
+        let lines = vec![
+            line("Left", 100.0, 200.0),
+            line("Nova", 100.0, 260.0),
+            line("Mid", 400.0, 200.0),
+            line("Genji", 400.0, 260.0),
+            line("Right", 700.0, 200.0),
+            line("Nazeebo", 700.0, 260.0),
+        ];
+        let draft = parse_draft(&lines, &heroes());
+        assert_eq!(draft.players.len(), 3);
+        assert!(!draft.players[0].is_self);
+        assert!(draft.players[1].is_self);
+        assert!(!draft.players[2].is_self);
     }
 }

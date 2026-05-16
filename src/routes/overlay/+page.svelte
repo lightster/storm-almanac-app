@@ -9,7 +9,7 @@
 	let counter = $state(0);
 	/** @type {'blocking' | 'interactable'} */
 	let blockerMode = $state('blocking');
-	/** @type {{ hero: string, rect: {x:number,y:number,width:number,height:number}, win_rates: {overall: number|null, player: number|null, player_games: number|null} }[]} */
+	/** @type {{ hero: string, player_name: string, is_self: boolean, rect: {x:number,y:number,width:number,height:number}, win_rates: {overall: number|null, player: number|null, player_games: number|null} }[]} */
 	let draftHeroes = $state([]);
 	let flashing = $state(false);
 	/** @type {(() => void) | undefined} */
@@ -225,7 +225,7 @@
 			</span>
 			{#if h.win_rates.player !== null}
 				<span class="wr player {wrClass(h.win_rates.player)}">
-					you {fmt(h.win_rates.player)}
+					{h.is_self ? 'you' : h.player_name} {fmt(h.win_rates.player)}
 				</span>
 			{/if}
 		</div>

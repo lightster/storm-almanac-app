@@ -51,6 +51,8 @@ pub struct DraftPlayer {
     pub name: String,
     pub name_rect: Rect,
     pub heroes: Vec<DraftHero>,
+    /// True for the user's own column (the unnamed centre column).
+    pub is_self: bool,
 }
 
 /// The parsed ARAM draft screen.
@@ -72,6 +74,10 @@ pub struct HeroWinRates {
 pub struct DraftOverlayHero {
     pub hero: String,
     pub rect: Rect,
+    /// OCR'd name of the player offered this hero.
+    pub player_name: String,
+    /// True if this hero belongs to the user's own column.
+    pub is_self: bool,
     pub win_rates: HeroWinRates,
 }
 
