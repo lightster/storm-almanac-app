@@ -57,7 +57,8 @@ impl DraftWatch {
         }
     }
 
-    /// Advance the state machine by one poll.
+    /// Advance the state machine by one poll. `Dismiss` and `Expire` are
+    /// terminal: the caller stops the watch window and does not tick again.
     pub fn tick(&mut self, armed_elapsed: Duration, header_present: bool) -> TickOutcome {
         match self.phase {
             Phase::BeforeDraft => {
