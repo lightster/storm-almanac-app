@@ -2,7 +2,11 @@
 //! match starts, polls a cheap header-OCR gate and shows the draft overlay
 //! when the "CHOOSE A HERO" screen appears, then hides it when it is gone.
 
-use std::time::Duration;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
+use tauri::Manager;
+
+use crate::draft_overlay;
 
 /// How long the watch window stays armed waiting for a draft to appear.
 const WATCH_TIMEOUT: Duration = Duration::from_secs(120);
@@ -95,6 +99,143 @@ impl DraftWatch {
 pub fn header_band(img: &image::RgbaImage) -> image::RgbaImage {
     let band_h = ((img.height() as f64 * 0.30).round() as u32).max(1);
     image::imageops::crop_imm(img, 0, 0, img.width(), band_h).to_image()
+}
+
+/// Capture the primary monitor, OCR only the header band, and report whether
+/// the ARAM "CHOOSE A HERO" header is on screen. Any capture or OCR failure is
+/// treated as "no draft" and logged at debug level, so a persistent failure
+/// (e.g. HoTS in exclusive fullscreen) does not spam the log.
+fn detect_header() -> bool {
+    let img = match crate::screen_capture::capture_primary_monitor() {
+        Ok(img) => img,
+        Err(e) => {
+            log::debug!("draft watcher: screen capture failed: {e}");
+            return false;
+        }
+    };
+    let band = header_band(&img);
+    let lines = match crate::ocr::recognize_lines(&band) {
+        Ok(lines) => lines,
+        Err(e) => {
+            log::debug!("draft watcher: header OCR failed: {e}");
+            return false;
+        }
+    };
+    crate::draft_parse::looks_like_draft(&lines)
+}
+
+struct WatcherInner {
+    /// When the current watch window armed, or `None` when not watching.
+    armed_at: Option<Instant>,
+    watch: DraftWatch,
+}
+
+/// App-managed handle to the draft watcher: the watch state plus a condvar the
+/// poll loop waits on, so `arm` and `wake_now` can prod it without waiting out
+/// the 1-second poll interval.
+pub struct SharedDraftWatcher {
+    inner: Mutex<WatcherInner>,
+    wake: Condvar,
+}
+
+/// Manage the watcher state and spawn the poll loop. Call once at startup,
+/// before anything that can call `arm` (i.e. before `battle_lobby_probe`).
+pub fn start(app: tauri::AppHandle) {
+    app.manage(SharedDraftWatcher {
+        inner: Mutex::new(WatcherInner {
+            armed_at: None,
+            watch: DraftWatch::new(),
+        }),
+        wake: Condvar::new(),
+    });
+    std::thread::spawn(move || run_loop(app));
+}
+
+/// Arm a fresh 2-minute watch window. No-op when the draft overlay feature is
+/// disabled. Called when a match starts.
+pub fn arm(app: &tauri::AppHandle) {
+    if !crate::config::load_config(app).draft_overlay_enabled {
+        return;
+    }
+    let state = app.state::<SharedDraftWatcher>();
+    {
+        let mut inner = state.inner.lock().unwrap();
+        inner.armed_at = Some(Instant::now());
+        inner.watch = DraftWatch::new();
+    }
+    state.wake.notify_one();
+    log::info!("draft watcher: armed");
+}
+
+/// Stop the current watch window, if any.
+pub fn disarm(app: &tauri::AppHandle) {
+    let state = app.state::<SharedDraftWatcher>();
+    let was_armed = state.inner.lock().unwrap().armed_at.take().is_some();
+    if was_armed {
+        log::info!("draft watcher: disarmed");
+    }
+}
+
+/// Prod the poll loop to run a poll immediately rather than waiting out the
+/// 1-second interval — used when HoTS regains focus.
+pub fn wake_now(app: &tauri::AppHandle) {
+    app.state::<SharedDraftWatcher>().wake.notify_one();
+}
+
+fn run_loop(app: tauri::AppHandle) {
+    loop {
+        {
+            let state = app.state::<SharedDraftWatcher>();
+            let guard = state.inner.lock().unwrap();
+            let _ = state
+                .wake
+                .wait_timeout(guard, Duration::from_secs(1))
+                .unwrap();
+        }
+        poll_once(&app);
+    }
+}
+
+fn poll_once(app: &tauri::AppHandle) {
+    let state = app.state::<SharedDraftWatcher>();
+
+    let armed_at = match state.inner.lock().unwrap().armed_at {
+        Some(at) => at,
+        None => return,
+    };
+    // Polling is foreground-gated: no capture/OCR cost while alt-tabbed away.
+    if !crate::game_focus::is_focused(app) {
+        return;
+    }
+
+    let header_present = detect_header();
+
+    let outcome = {
+        let mut inner = state.inner.lock().unwrap();
+        // A disarm may have raced the capture/OCR above.
+        if inner.armed_at.is_none() {
+            return;
+        }
+        inner.watch.tick(armed_at.elapsed(), header_present)
+    };
+
+    match outcome {
+        TickOutcome::Idle => {}
+        TickOutcome::RunPipeline => {
+            log::info!("draft watcher: draft detected, running pipeline");
+            draft_overlay::run_pipeline(app.clone());
+        }
+        TickOutcome::EnsureShown => draft_overlay::reveal(app),
+        TickOutcome::Dismiss => {
+            log::info!("draft watcher: draft dismissed");
+            draft_overlay::hide_window(app);
+            disarm(app);
+        }
+        TickOutcome::Expire => {
+            log::info!("draft watcher: watch window expired");
+            disarm(app);
+        }
+    }
 }
 
 #[cfg(test)]

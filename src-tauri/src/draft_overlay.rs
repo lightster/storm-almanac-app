@@ -94,6 +94,14 @@ pub fn hide_window(app: &tauri::AppHandle) {
     }
 }
 
+/// Re-show the overlay window if it exists — used to restore it after a
+/// focus-loss hide while a draft is still on screen.
+pub fn reveal(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window(DRAFT_LABEL) {
+        let _ = w.show();
+    }
+}
+
 /// Store the payload, push it to the overlay window, and reveal the window.
 fn show_overlay(app: &tauri::AppHandle, heroes: Vec<DraftOverlayHero>) -> Result<(), String> {
     let payload = DraftOverlayPayload { heroes };
