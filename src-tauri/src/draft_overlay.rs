@@ -98,7 +98,9 @@ pub fn hide_window(app: &tauri::AppHandle) {
 /// focus-loss hide while a draft is still on screen.
 pub fn reveal(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window(DRAFT_LABEL) {
-        let _ = w.show();
+        if let Err(e) = w.show() {
+            log::error!("draft overlay: reveal failed: {e}");
+        }
     }
 }
 
