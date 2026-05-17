@@ -123,10 +123,7 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
     let img = crate::screen_capture::capture_primary_monitor()?;
     let lines = crate::ocr::recognize_lines(&img)?;
 
-    let looks_like_draft = lines
-        .iter()
-        .any(|l| l.text.to_uppercase().contains("CHOOSE A HERO"));
-    if !looks_like_draft {
+    if !crate::draft_parse::looks_like_draft(&lines) {
         log::info!("draft overlay: no 'CHOOSE A HERO' found; ignoring");
         return Ok(());
     }

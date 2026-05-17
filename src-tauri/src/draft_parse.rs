@@ -58,6 +58,13 @@ pub fn match_hero(ocr_text: &str, hero_list: &[String]) -> Option<String> {
 /// Maximum horizontal gap (px) between hero labels considered the same column.
 const COLUMN_GAP: f64 = 140.0;
 
+/// Whether OCR output looks like the ARAM "CHOOSE A HERO" draft screen.
+pub fn looks_like_draft(lines: &[OcrLine]) -> bool {
+    lines
+        .iter()
+        .any(|l| l.text.to_uppercase().contains("CHOOSE A HERO"))
+}
+
 /// Parse OCR lines into a structured draft.
 pub fn parse_draft(lines: &[OcrLine], hero_list: &[String]) -> Draft {
     struct HeroLabel<'a> {
@@ -250,6 +257,24 @@ mod tests {
         let draft = parse_draft(&lines, &heroes());
         assert_eq!(draft.players.len(), 1);
         assert_eq!(draft.players[0].heroes.len(), 2);
+    }
+
+    #[test]
+    fn looks_like_draft_detects_the_header() {
+        let lines = vec![line("CHOOSE A HERO", 100.0, 50.0)];
+        assert!(looks_like_draft(&lines));
+    }
+
+    #[test]
+    fn looks_like_draft_is_case_insensitive() {
+        let lines = vec![line("Choose a Hero", 100.0, 50.0)];
+        assert!(looks_like_draft(&lines));
+    }
+
+    #[test]
+    fn looks_like_draft_false_without_the_header() {
+        let lines = vec![line("Nova", 100.0, 50.0)];
+        assert!(!looks_like_draft(&lines));
     }
 
     #[test]
