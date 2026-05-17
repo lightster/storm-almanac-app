@@ -757,6 +757,7 @@ pub fn on_game_ended(app: &tauri::AppHandle) {
         s.in_game = false;
     }
     log::info!("game session: match ended");
+    draft_watcher::disarm(app);
     refresh_blocker_visibility(app);
 }
 
