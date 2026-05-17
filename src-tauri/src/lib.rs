@@ -711,6 +711,7 @@ fn set_draft_overlay_enabled(app: &tauri::AppHandle, enabled: bool) {
     } else {
         unregister_draft_overlay_hotkey(app);
         draft_overlay::hide_window(app);
+        draft_watcher::disarm(app);
     }
     log::info!("draft overlay enabled={enabled}");
 }
@@ -718,6 +719,9 @@ fn set_draft_overlay_enabled(app: &tauri::AppHandle, enabled: bool) {
 fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
     if !focused {
         draft_overlay::hide_window(app);
+    }
+    if focused {
+        draft_watcher::wake_now(app);
     }
     if !focused && !is_game_running() {
         // HoTS has fully exited — clear the in-game flag so the blocker won't
@@ -739,6 +743,7 @@ pub fn on_game_started(app: &tauri::AppHandle) {
         s.in_game = true;
     }
     log::info!("game session: match started");
+    draft_watcher::arm(app);
     refresh_blocker_visibility(app);
 }
 
@@ -1155,6 +1160,9 @@ pub fn run() {
                     }
                 });
             }
+
+            // Auto-detect the ARAM draft screen once a match starts.
+            draft_watcher::start(app.handle().clone());
 
             // Diagnostic probe — watches %TEMP% for *.battlelobby files and
             // dumps them with a printable-strings index so we can figure out
