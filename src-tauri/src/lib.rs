@@ -4,6 +4,7 @@ mod config;
 mod draft_overlay;
 mod draft_parse;
 mod draft_types;
+mod draft_watcher;
 mod game_focus;
 mod game_session;
 mod input_recorder;
