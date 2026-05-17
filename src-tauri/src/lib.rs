@@ -1246,8 +1246,6 @@ pub fn run() {
             toggle_overlay_pair,
             reveal_path,
             clear_webview_data,
-            screen_capture::dev_capture_screen,
-            ocr::dev_ocr_screen,
             draft_overlay::get_draft_overlay_data,
         ])
         .build(tauri::generate_context!())

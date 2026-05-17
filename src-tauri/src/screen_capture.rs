@@ -84,11 +84,3 @@ pub fn capture_primary_monitor() -> Result<image::RgbaImage, String> {
     Err("screen capture is only supported on Windows".into())
 }
 
-/// DEV-ONLY: capture the screen and save it to the temp dir for inspection.
-#[tauri::command]
-pub fn dev_capture_screen() -> Result<String, String> {
-    let img = capture_primary_monitor()?;
-    let path = std::env::temp_dir().join("storm-almanac-capture.png");
-    img.save(&path).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().into_owned())
-}

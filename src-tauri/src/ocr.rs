@@ -71,13 +71,3 @@ pub fn recognize_lines(_img: &image::RgbaImage) -> Result<Vec<OcrLine>, String> 
     Err("OCR is only supported on Windows".into())
 }
 
-/// DEV-ONLY: capture the screen, OCR it, and return every recognized line.
-#[tauri::command]
-pub fn dev_ocr_screen() -> Result<Vec<(String, f64, f64)>, String> {
-    let img = crate::screen_capture::capture_primary_monitor()?;
-    let lines = recognize_lines(&img)?;
-    Ok(lines
-        .into_iter()
-        .map(|l| (l.text, l.rect.x, l.rect.y))
-        .collect())
-}
