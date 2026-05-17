@@ -47,6 +47,14 @@
 			} catch (e) {
 				console.error('get_draft_overlay_data failed', e);
 			}
+			// The overlay window persists once created, so it mounts only once.
+			// Each draft pushes fresh data via this event.
+			unlisten = await listen('draft://update', (event) => {
+				const heroes = event?.payload?.heroes;
+				if (Array.isArray(heroes)) {
+					draftHeroes = heroes;
+				}
+			});
 		}
 	});
 

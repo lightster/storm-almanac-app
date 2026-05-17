@@ -3,7 +3,7 @@
 use crate::draft_types::{DraftOverlayHero, DraftOverlayPayload, HeroWinRates};
 use crate::win_rates;
 use std::collections::HashMap;
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const DRAFT_LABEL: &str = "overlay-draft";
 
@@ -37,12 +37,16 @@ fn estimate_circle(name: &crate::draft_types::Rect, pitch: f64) -> crate::draft_
 /// Holds the most recent draft payload for the overlay window to pull on mount.
 pub type SharedDraftPayload = std::sync::Mutex<Option<DraftOverlayPayload>>;
 
-/// Open the full-screen transparent click-through overlay window.
-fn open_window(app: &tauri::AppHandle) {
+/// Create the overlay window if it does not exist yet, then persist it. It is
+/// built **visible**, mirroring the map blocker: the WebView2 initialises
+/// while the window is on screen, so it paints correctly. A window created
+/// hidden shows a blank webview the first time it is revealed. After creation
+/// the window is only ever shown/hidden, never rebuilt.
+pub fn ensure_window(app: &tauri::AppHandle) {
     if app.get_webview_window(DRAFT_LABEL).is_some() {
         return;
     }
-    let result = WebviewWindowBuilder::new(
+    let mut builder = WebviewWindowBuilder::new(
         app,
         DRAFT_LABEL,
         WebviewUrl::App("/overlay?mode=draft".into()),
@@ -52,22 +56,57 @@ fn open_window(app: &tauri::AppHandle) {
     .always_on_top(true)
     .skip_taskbar(true)
     .shadow(false)
+    .resizable(false)
     .focused(false)
     .focusable(false)
-    .maximized(true)
-    .visible(true)
-    .build();
-    match result {
-        Ok(_) => log::info!("Opened draft overlay window"),
-        Err(e) => log::error!("Failed to open draft overlay window: {e}"),
+    .visible(true);
+
+    // Size + position the window to cover the primary monitor explicitly.
+    // `.maximized(true)` is avoided: applying the maximized state activates
+    // the window on Windows, which would steal foreground from HoTS.
+    match app.primary_monitor() {
+        Ok(Some(m)) => {
+            let scale = m.scale_factor();
+            let size = m.size();
+            let pos = m.position();
+            builder = builder
+                .inner_size(size.width as f64 / scale, size.height as f64 / scale)
+                .position(pos.x as f64 / scale, pos.y as f64 / scale);
+        }
+        _ => {
+            log::warn!("draft overlay: primary monitor unavailable at window creation");
+        }
+    }
+
+    match builder.build() {
+        Ok(_) => log::info!("Created draft overlay window"),
+        Err(e) => log::error!("Failed to create draft overlay window: {e}"),
     }
 }
 
-/// Close the overlay window if open.
-pub fn close_window(app: &tauri::AppHandle) {
+/// Hide the overlay window. It persists, hidden, for the next draft.
+pub fn hide_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window(DRAFT_LABEL) {
-        let _ = w.close();
+        match w.hide() {
+            Ok(_) => log::info!("draft overlay: hid window"),
+            Err(e) => log::error!("draft overlay: hide failed: {e}"),
+        }
     }
+}
+
+/// Store the payload, push it to the overlay window, and reveal the window.
+fn show_overlay(app: &tauri::AppHandle, heroes: Vec<DraftOverlayHero>) -> Result<(), String> {
+    let payload = DraftOverlayPayload { heroes };
+    {
+        let state = app.state::<SharedDraftPayload>();
+        *state.lock().unwrap() = Some(payload.clone());
+    }
+    ensure_window(app);
+    let _ = app.emit_to(DRAFT_LABEL, "draft://update", payload);
+    if let Some(w) = app.get_webview_window(DRAFT_LABEL) {
+        w.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Run the full pipeline once: capture -> OCR -> parse -> win rates -> emit.
@@ -160,17 +199,7 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         }
     }
 
-    // Store the payload first, then open the window. The overlay pulls the
-    // data via the get_draft_overlay_data command once its UI has mounted,
-    // so there is no timing race against webview load.
-    {
-        let state = app.state::<SharedDraftPayload>();
-        *state.lock().unwrap() = Some(DraftOverlayPayload { heroes });
-    }
-    let app2 = app.clone();
-    app.run_on_main_thread(move || open_window(&app2))
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    show_overlay(app, heroes)
 }
 
 /// The overlay window calls this on mount to fetch the latest draft data.
@@ -181,10 +210,14 @@ pub fn get_draft_overlay_data(
     state.lock().unwrap().clone()
 }
 
-/// Hotkey handler: if the overlay is open, dismiss it; else run the pipeline.
+/// Hotkey handler: if the overlay is showing, hide it; else run the pipeline.
 pub fn toggle(app: &tauri::AppHandle) {
-    if app.get_webview_window(DRAFT_LABEL).is_some() {
-        close_window(app);
+    let showing = app
+        .get_webview_window(DRAFT_LABEL)
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    if showing {
+        hide_window(app);
     } else {
         run_pipeline(app.clone());
     }

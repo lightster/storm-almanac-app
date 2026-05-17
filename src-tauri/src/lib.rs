@@ -709,14 +709,14 @@ fn set_draft_overlay_enabled(app: &tauri::AppHandle, enabled: bool) {
         register_draft_overlay_hotkey(app);
     } else {
         unregister_draft_overlay_hotkey(app);
-        draft_overlay::close_window(app);
+        draft_overlay::hide_window(app);
     }
     log::info!("draft overlay enabled={enabled}");
 }
 
 fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
     if !focused {
-        draft_overlay::close_window(app);
+        draft_overlay::hide_window(app);
     }
     if !focused && !is_game_running() {
         // HoTS has fully exited — clear the in-game flag so the blocker won't
