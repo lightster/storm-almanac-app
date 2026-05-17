@@ -7,6 +7,33 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const DRAFT_LABEL: &str = "overlay-draft";
 
+/// Estimate the vertical pitch (px) between a column's hero rows.
+fn column_pitch(heroes: &[crate::draft_types::DraftHero]) -> f64 {
+    if heroes.len() < 2 {
+        return heroes.first().map(|h| h.rect.height * 6.0).unwrap_or(120.0);
+    }
+    let mut gaps: Vec<f64> = heroes
+        .windows(2)
+        .map(|w| (w[1].rect.y - w[0].rect.y).abs())
+        .collect();
+    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    gaps[gaps.len() / 2]
+}
+
+/// Estimate a hero's portrait-circle box from its name rect and the column
+/// pitch. HoTS draws the circle centred just above the name label.
+fn estimate_circle(name: &crate::draft_types::Rect, pitch: f64) -> crate::draft_types::Rect {
+    let diameter = pitch * 0.72;
+    let center_x = name.x + name.width / 2.0;
+    let bottom = name.y - pitch * 0.05;
+    crate::draft_types::Rect {
+        x: center_x - diameter / 2.0,
+        y: bottom - diameter,
+        width: diameter,
+        height: diameter,
+    }
+}
+
 /// Holds the most recent draft payload for the overlay window to pull on mount.
 pub type SharedDraftPayload = std::sync::Mutex<Option<DraftOverlayPayload>>;
 
@@ -115,11 +142,13 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
             None => None,
         };
 
+        let pitch = column_pitch(&player.heroes);
         for hero in &player.heroes {
             let player_wr = player_table.as_ref().and_then(|t| t.get(&hero.hero).copied());
             heroes.push(DraftOverlayHero {
                 hero: hero.hero.clone(),
                 rect: hero.rect.descale(scale),
+                circle: estimate_circle(&hero.rect, pitch).descale(scale),
                 player_name: player.name.clone(),
                 is_self: player.is_self,
                 win_rates: HeroWinRates {

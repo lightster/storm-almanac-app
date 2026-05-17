@@ -9,7 +9,7 @@
 	let counter = $state(0);
 	/** @type {'blocking' | 'interactable'} */
 	let blockerMode = $state('blocking');
-	/** @type {{ hero: string, player_name: string, is_self: boolean, rect: {x:number,y:number,width:number,height:number}, win_rates: {overall: number|null, player: number|null, player_games: number|null} }[]} */
+	/** @type {{ hero: string, player_name: string, is_self: boolean, rect: {x:number,y:number,width:number,height:number}, circle: {x:number,y:number,width:number,height:number}, win_rates: {overall: number|null, player: number|null, player_games: number|null} }[]} */
 	let draftHeroes = $state([]);
 	let flashing = $state(false);
 	/** @type {(() => void) | undefined} */
@@ -217,18 +217,19 @@
 {:else if mode === 'draft'}
 	{#each draftHeroes as h (h.hero + h.rect.x + h.rect.y)}
 		<div
-			class="draft-label"
-			style="left: {h.rect.x}px; top: {h.rect.y + h.rect.height + 2}px;"
+			class="wr-badge overall {wrClass(h.win_rates.overall)}"
+			style="left: {h.circle.x}px; top: {h.circle.y}px;"
 		>
-			<span class="wr overall {wrClass(h.win_rates.overall)}">
-				{fmt(h.win_rates.overall)}
-			</span>
-			{#if h.win_rates.player !== null}
-				<span class="wr player {wrClass(h.win_rates.player)}">
-					{h.is_self ? 'you' : h.player_name} {fmt(h.win_rates.player)}
-				</span>
-			{/if}
+			{fmt(h.win_rates.overall)}
 		</div>
+		{#if h.win_rates.player !== null}
+			<div
+				class="wr-badge personal {wrClass(h.win_rates.player)}"
+				style="left: {h.circle.x + h.circle.width}px; top: {h.circle.y}px;"
+			>
+				{h.is_self ? 'you' : h.player_name}&nbsp;{fmt(h.win_rates.player)}
+			</div>
+		{/if}
 	{/each}
 {/if}
 
@@ -423,23 +424,33 @@
 		cursor: sw-resize;
 	}
 
-	.draft-label {
+	.wr-badge {
 		position: absolute;
-		display: flex;
-		gap: 4px;
 		font-family: 'DM Sans', system-ui, sans-serif;
 		font-size: 12px;
 		font-weight: 700;
+		line-height: 1;
+		padding: 2px 6px;
+		border-radius: 6px;
+		background: rgba(8, 10, 20, 0.82);
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
 		pointer-events: none;
 		white-space: nowrap;
 	}
-	.wr {
-		padding: 1px 5px;
-		border-radius: 5px;
-		background: rgba(0, 0, 0, 0.8);
+	.wr-badge.overall {
+		transform: translate(-45%, -45%);
 	}
-	.wr.good { color: #4ade80; }
-	.wr.bad { color: #f87171; }
-	.wr.neutral { color: #e5e7eb; }
-	.wr.player { background: rgba(20, 30, 60, 0.9); }
+	.wr-badge.personal {
+		transform: translate(-55%, -45%);
+	}
+	.wr-badge.good {
+		color: #5ef08a;
+	}
+	.wr-badge.bad {
+		color: #ff7676;
+	}
+	.wr-badge.neutral {
+		color: #e8eaf0;
+	}
 </style>

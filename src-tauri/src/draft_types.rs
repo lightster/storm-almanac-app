@@ -74,6 +74,8 @@ pub struct HeroWinRates {
 pub struct DraftOverlayHero {
     pub hero: String,
     pub rect: Rect,
+    /// Estimated portrait-circle box (logical pixels).
+    pub circle: Rect,
     /// OCR'd name of the player offered this hero.
     pub player_name: String,
     /// True if this hero belongs to the user's own column.
