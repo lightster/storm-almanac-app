@@ -89,6 +89,14 @@ impl DraftWatch {
     }
 }
 
+/// Crop the top 30% of a screenshot — the band that contains the ARAM
+/// "CHOOSE A HERO" header — so the detection gate OCRs far fewer pixels
+/// than a full-screen pass.
+pub fn header_band(img: &image::RgbaImage) -> image::RgbaImage {
+    let band_h = ((img.height() as f64 * 0.30).round() as u32).max(1);
+    image::imageops::crop_imm(img, 0, 0, img.width(), band_h).to_image()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +165,19 @@ mod tests {
         let mut w = DraftWatch::new();
         w.tick(SHORT, true); // DraftShown
         assert_eq!(w.tick(WATCH_TIMEOUT * 2, true), TickOutcome::EnsureShown);
+    }
+
+    #[test]
+    fn header_band_crops_the_top_30_percent() {
+        let img = image::RgbaImage::new(800, 1000);
+        let band = header_band(&img);
+        assert_eq!(band.width(), 800);
+        assert_eq!(band.height(), 300);
+    }
+
+    #[test]
+    fn header_band_is_never_zero_height() {
+        let img = image::RgbaImage::new(10, 1);
+        assert_eq!(header_band(&img).height(), 1);
     }
 }
