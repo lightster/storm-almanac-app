@@ -719,8 +719,7 @@ fn set_draft_overlay_enabled(app: &tauri::AppHandle, enabled: bool) {
 fn handle_focus_change(app: &tauri::AppHandle, focused: bool) {
     if !focused {
         draft_overlay::hide_window(app);
-    }
-    if focused {
+    } else {
         draft_watcher::wake_now(app);
     }
     if !focused && !is_game_running() {
