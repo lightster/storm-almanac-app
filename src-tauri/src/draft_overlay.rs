@@ -119,9 +119,27 @@ fn show_overlay(app: &tauri::AppHandle, heroes: Vec<DraftOverlayHero>) -> Result
     Ok(())
 }
 
+/// Drop the previous draft's payload and blank the overlay. Called when a new
+/// pipeline run begins: capture + OCR + network take several seconds, during
+/// which the watcher may reveal the window — without this, it would show the
+/// *previous* draft's win rates pinned to the new draft's (identically laid
+/// out) portraits.
+fn clear_payload(app: &tauri::AppHandle) {
+    {
+        let state = app.state::<SharedDraftPayload>();
+        *state.lock().unwrap() = None;
+    }
+    let _ = app.emit_to(
+        DRAFT_LABEL,
+        "draft://update",
+        DraftOverlayPayload { heroes: Vec::new() },
+    );
+}
+
 /// Run the full pipeline once: capture -> OCR -> parse -> win rates -> emit.
 /// Runs on a background thread; never blocks the caller.
 pub fn run_pipeline(app: tauri::AppHandle) {
+    clear_payload(&app);
     std::thread::spawn(move || {
         if let Err(e) = run_pipeline_inner(&app) {
             log::error!("draft overlay pipeline failed: {e}");
