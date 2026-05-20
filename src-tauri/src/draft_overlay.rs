@@ -148,15 +148,29 @@ pub fn run_pipeline(app: tauri::AppHandle) {
 }
 
 fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
+    let pipeline_start = std::time::Instant::now();
+
+    let t = std::time::Instant::now();
     let img = crate::screen_capture::capture_primary_monitor()?;
+    let capture_ms = t.elapsed().as_millis();
+
+    let t = std::time::Instant::now();
     let lines = crate::ocr::recognize_lines(&img)?;
+    let ocr_ms = t.elapsed().as_millis();
+    log::info!(
+        "draft pipeline: capture {capture_ms}ms, ocr {ocr_ms}ms ({} lines)",
+        lines.len()
+    );
 
     if !crate::draft_parse::looks_like_draft(&lines) {
         log::info!("draft overlay: no 'CHOOSE A HERO' found; ignoring");
         return Ok(());
     }
 
+    let t = std::time::Instant::now();
     let base = tauri::async_runtime::block_on(win_rates::fetch_draft(None))?;
+    let base_fetch_ms = t.elapsed().as_millis();
+    log::info!("draft pipeline: base-fetch {base_fetch_ms}ms");
     let base_table = win_rates::build_table(&base);
 
     let draft = crate::draft_parse::parse_draft(&lines, &base_table.hero_names);
@@ -176,8 +190,11 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         .unwrap_or(1.0);
 
     let mut heroes: Vec<DraftOverlayHero> = Vec::new();
-    for player in &draft.players {
+    for (idx, player) in draft.players.iter().enumerate() {
+        let player_start = std::time::Instant::now();
+
         // Resolve this column's player to a backend battletag.
+        let mut search_ms: u128 = 0;
         let battletag: Option<String> = if player.is_self {
             if own_battletag.is_empty() {
                 None
@@ -185,26 +202,45 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
                 Some(own_battletag.clone())
             }
         } else {
-            match tauri::async_runtime::block_on(win_rates::search_players(&player.name)) {
-                Ok(cands) => win_rates::resolve_unique(&player.name, &cands),
-                Err(e) => {
-                    log::warn!("player search failed for {}: {e}", player.name);
-                    None
-                }
-            }
+            let t = std::time::Instant::now();
+            let result =
+                match tauri::async_runtime::block_on(win_rates::search_players(&player.name)) {
+                    Ok(cands) => win_rates::resolve_unique(&player.name, &cands),
+                    Err(e) => {
+                        log::warn!("player search failed for {}: {e}", player.name);
+                        None
+                    }
+                };
+            search_ms = t.elapsed().as_millis();
+            result
         };
 
         // Fetch that player's per-hero ARAM win rates, if resolved.
+        let mut fetch_ms: u128 = 0;
         let player_table: Option<HashMap<String, (f64, u32)>> = match battletag {
-            Some(bt) => match tauri::async_runtime::block_on(win_rates::fetch_draft(Some(&bt))) {
-                Ok(resp) => Some(win_rates::build_table(&resp).player),
-                Err(e) => {
-                    log::warn!("draft fetch failed for {bt}: {e}");
-                    None
-                }
-            },
+            Some(bt) => {
+                let t = std::time::Instant::now();
+                let result =
+                    match tauri::async_runtime::block_on(win_rates::fetch_draft(Some(&bt))) {
+                        Ok(resp) => Some(win_rates::build_table(&resp).player),
+                        Err(e) => {
+                            log::warn!("draft fetch failed for {bt}: {e}");
+                            None
+                        }
+                    };
+                fetch_ms = t.elapsed().as_millis();
+                result
+            }
             None => None,
         };
+
+        log::info!(
+            "draft pipeline: player[{idx}] {:?} total {}ms (search {}ms, fetch {}ms)",
+            player.name,
+            player_start.elapsed().as_millis(),
+            search_ms,
+            fetch_ms,
+        );
 
         let pitch = column_pitch(&player.heroes);
         for hero in &player.heroes {
@@ -224,6 +260,10 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         }
     }
 
+    log::info!(
+        "draft pipeline: total {}ms",
+        pipeline_start.elapsed().as_millis()
+    );
     show_overlay(app, heroes)
 }
 
