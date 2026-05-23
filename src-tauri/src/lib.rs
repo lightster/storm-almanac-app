@@ -15,7 +15,6 @@ mod screen_capture;
 mod state;
 mod uploader;
 mod watcher;
-mod win_rates;
 
 use config::{load_config, load_history, load_known_hashes, save_known_hashes, save_config, AppConfig};
 use serde::{Deserialize, Serialize};
