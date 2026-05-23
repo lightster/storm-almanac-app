@@ -9,6 +9,7 @@ mod game_focus;
 mod game_session;
 mod input_recorder;
 mod ocr;
+mod overlay_api;
 mod screen_capture;
 mod state;
 mod uploader;
