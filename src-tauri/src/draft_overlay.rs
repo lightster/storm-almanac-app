@@ -1,8 +1,6 @@
 //! ARAM draft overlay orchestration: pipeline, window, hotkey.
 
 use crate::draft_types::{DraftOverlayHero, DraftOverlayPayload, HeroWinRates};
-use crate::win_rates;
-use std::collections::HashMap;
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const DRAFT_LABEL: &str = "overlay-draft";
@@ -167,19 +165,28 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    // Fetch (or read cached) hero catalog. The startup warmup usually
+    // makes this ~0 ms; cold-start worst case is one round trip.
+    let catalog_state = app.state::<crate::hero_catalog::SharedHeroCatalog>();
+    let catalog = catalog_state.inner().clone();
     let t = std::time::Instant::now();
-    let base = tauri::async_runtime::block_on(win_rates::fetch_draft(None))?;
-    let base_fetch_ms = t.elapsed().as_millis();
-    log::info!("draft pipeline: base-fetch {base_fetch_ms}ms");
-    let base_table = win_rates::build_table(&base);
+    let hero_list = tauri::async_runtime::block_on(catalog.ensure())?;
+    let catalog_ms = t.elapsed().as_millis();
+    log::info!("draft pipeline: catalog {catalog_ms}ms");
 
-    let draft = crate::draft_parse::parse_draft(&lines, &base_table.hero_names);
+    let draft = crate::draft_parse::parse_draft(&lines, &hero_list);
     if draft.players.is_empty() {
         log::info!("draft overlay: parsed no player columns");
         return Ok(());
     }
 
     let own_battletag = crate::config::load_config(app).player_battletag;
+    let request = build_overlay_request(&draft, &own_battletag);
+
+    let t = std::time::Instant::now();
+    let resp = tauri::async_runtime::block_on(crate::overlay_api::fetch_overlay_draft(&request))?;
+    let batch_ms = t.elapsed().as_millis();
+    log::info!("draft pipeline: batch-fetch {batch_ms}ms");
 
     // Physical-pixel OCR rects -> logical pixels for the overlay window.
     let scale = app
@@ -189,82 +196,84 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
         .map(|m| m.scale_factor())
         .unwrap_or(1.0);
 
-    let mut heroes: Vec<DraftOverlayHero> = Vec::new();
-    for (idx, player) in draft.players.iter().enumerate() {
-        let player_start = std::time::Instant::now();
-
-        // Resolve this column's player to a backend battletag.
-        let mut search_ms: u128 = 0;
-        let battletag: Option<String> = if player.is_self {
-            if own_battletag.is_empty() {
-                None
-            } else {
-                Some(own_battletag.clone())
-            }
-        } else {
-            let t = std::time::Instant::now();
-            let result =
-                match tauri::async_runtime::block_on(win_rates::search_players(&player.name)) {
-                    Ok(cands) => win_rates::resolve_unique(&player.name, &cands),
-                    Err(e) => {
-                        log::warn!("player search failed for {}: {e}", player.name);
-                        None
-                    }
-                };
-            search_ms = t.elapsed().as_millis();
-            result
-        };
-
-        // Fetch that player's per-hero ARAM win rates, if resolved.
-        let mut fetch_ms: u128 = 0;
-        let player_table: Option<HashMap<String, (f64, u32)>> = match battletag {
-            Some(bt) => {
-                let t = std::time::Instant::now();
-                let result =
-                    match tauri::async_runtime::block_on(win_rates::fetch_draft(Some(&bt))) {
-                        Ok(resp) => Some(win_rates::build_table(&resp).player),
-                        Err(e) => {
-                            log::warn!("draft fetch failed for {bt}: {e}");
-                            None
-                        }
-                    };
-                fetch_ms = t.elapsed().as_millis();
-                result
-            }
-            None => None,
-        };
-
-        log::info!(
-            "draft pipeline: player[{idx}] {:?} total {}ms (search {}ms, fetch {}ms)",
-            player.name,
-            player_start.elapsed().as_millis(),
-            search_ms,
-            fetch_ms,
-        );
-
-        let pitch = column_pitch(&player.heroes);
-        for hero in &player.heroes {
-            let player_wr = player_table.as_ref().and_then(|t| t.get(&hero.hero).copied());
-            heroes.push(DraftOverlayHero {
-                hero: hero.hero.clone(),
-                rect: hero.rect.descale(scale),
-                circle: estimate_circle(&hero.rect, pitch).descale(scale),
-                player_name: player.name.clone(),
-                is_self: player.is_self,
-                win_rates: HeroWinRates {
-                    overall: base_table.overall.get(&hero.hero).copied(),
-                    player: player_wr.map(|(wr, _)| wr),
-                    player_games: player_wr.map(|(_, g)| g),
-                },
-            });
-        }
-    }
+    let heroes = build_overlay_heroes(&draft, &resp, scale);
 
     log::info!(
         "draft pipeline: total {}ms",
         pipeline_start.elapsed().as_millis()
     );
     show_overlay(app, heroes)
+}
+
+/// Translate a parsed draft + the user's own battletag into the request
+/// body for POST /api/overlay/draft. The self column sends the
+/// battletag when known; every other column sends the OCR'd name; a
+/// column with no usable identifier sends just heroes (server returns
+/// `null` for it).
+fn build_overlay_request(
+    draft: &crate::draft_types::Draft,
+    own_battletag: &str,
+) -> crate::overlay_api::OverlayDraftRequest {
+    crate::overlay_api::OverlayDraftRequest {
+        players: draft
+            .players
+            .iter()
+            .map(|p| {
+                let heroes = p.heroes.iter().map(|h| h.hero.clone()).collect();
+                if p.is_self {
+                    if own_battletag.is_empty() {
+                        crate::overlay_api::OverlayDraftPlayer {
+                            battletag: None,
+                            name: None,
+                            heroes,
+                        }
+                    } else {
+                        crate::overlay_api::OverlayDraftPlayer {
+                            battletag: Some(own_battletag.to_string()),
+                            name: None,
+                            heroes,
+                        }
+                    }
+                } else {
+                    crate::overlay_api::OverlayDraftPlayer {
+                        battletag: None,
+                        name: Some(p.name.clone()),
+                        heroes,
+                    }
+                }
+            })
+            .collect(),
+    }
+}
+
+/// Merge parsed draft geometry with the batch response into the flat
+/// list of overlay-renderable heroes.
+fn build_overlay_heroes(
+    draft: &crate::draft_types::Draft,
+    resp: &crate::overlay_api::OverlayDraftResponse,
+    scale: f64,
+) -> Vec<DraftOverlayHero> {
+    let mut out: Vec<DraftOverlayHero> = Vec::new();
+    for (idx, player) in draft.players.iter().enumerate() {
+        let player_rates = resp.players.get(idx).and_then(|p| p.as_ref());
+        let pitch = column_pitch(&player.heroes);
+        for hero in &player.heroes {
+            let player_wr = player_rates.and_then(|t| t.get(&hero.hero).copied().flatten());
+            out.push(DraftOverlayHero {
+                hero: hero.hero.clone(),
+                rect: hero.rect.descale(scale),
+                circle: estimate_circle(&hero.rect, pitch).descale(scale),
+                player_name: player.name.clone(),
+                is_self: player.is_self,
+                win_rates: HeroWinRates {
+                    overall: resp.overall.get(&hero.hero).copied(),
+                    player: player_wr.map(|h| h.win_rate),
+                    player_games: player_wr.map(|h| h.games),
+                },
+            });
+        }
+    }
+    out
 }
 
 /// The overlay window calls this on mount to fetch the latest draft data.
@@ -285,5 +294,113 @@ pub fn toggle(app: &tauri::AppHandle) {
         hide_window(app);
     } else {
         run_pipeline(app.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::draft_types::{Draft, DraftHero, DraftPlayer, Rect};
+    use crate::overlay_api::{OverlayDraftResponse, OverlayPlayerHero};
+    use std::collections::HashMap;
+
+    fn rect(x: f64, y: f64) -> Rect {
+        Rect { x, y, width: 80.0, height: 18.0 }
+    }
+
+    #[test]
+    fn build_request_sends_battletag_for_self_when_configured() {
+        let draft = Draft {
+            players: vec![
+                DraftPlayer {
+                    name: "zulu".into(),
+                    name_rect: rect(100.0, 100.0),
+                    heroes: vec![DraftHero { hero: "Stitches".into(), rect: rect(100.0, 200.0) }],
+                    is_self: false,
+                },
+                DraftPlayer {
+                    name: "(self)".into(),
+                    name_rect: rect(300.0, 100.0),
+                    heroes: vec![DraftHero { hero: "Whitemane".into(), rect: rect(300.0, 200.0) }],
+                    is_self: true,
+                },
+            ],
+        };
+        let req = build_overlay_request(&draft, "Lightster#1234");
+        assert_eq!(req.players[0].name, Some("zulu".into()));
+        assert_eq!(req.players[0].battletag, None);
+        assert_eq!(req.players[1].battletag, Some("Lightster#1234".into()));
+        assert_eq!(req.players[1].name, None);
+    }
+
+    #[test]
+    fn build_request_omits_identifier_for_self_when_unconfigured() {
+        let draft = Draft {
+            players: vec![DraftPlayer {
+                name: "(self)".into(),
+                name_rect: rect(100.0, 100.0),
+                heroes: vec![DraftHero { hero: "Stitches".into(), rect: rect(100.0, 200.0) }],
+                is_self: true,
+            }],
+        };
+        let req = build_overlay_request(&draft, "");
+        assert_eq!(req.players[0].battletag, None);
+        assert_eq!(req.players[0].name, None);
+        assert_eq!(req.players[0].heroes, vec!["Stitches".to_string()]);
+    }
+
+    #[test]
+    fn build_heroes_merges_overall_and_per_player_rates() {
+        let draft = Draft {
+            players: vec![DraftPlayer {
+                name: "zulu".into(),
+                name_rect: rect(100.0, 100.0),
+                heroes: vec![
+                    DraftHero { hero: "Stitches".into(), rect: rect(100.0, 200.0) },
+                    DraftHero { hero: "Genji".into(),    rect: rect(100.0, 320.0) },
+                ],
+                is_self: false,
+            }],
+        };
+        let mut overall = HashMap::new();
+        overall.insert("Stitches".to_string(), 51.2);
+        overall.insert("Genji".to_string(), 49.0);
+        let mut player0 = HashMap::new();
+        player0.insert("Stitches".to_string(), Some(OverlayPlayerHero { win_rate: 60.0, games: 12 }));
+        player0.insert("Genji".to_string(), None);
+        let resp = OverlayDraftResponse {
+            overall,
+            players: vec![Some(player0)],
+        };
+        let heroes = build_overlay_heroes(&draft, &resp, 1.0);
+        assert_eq!(heroes.len(), 2);
+        assert_eq!(heroes[0].hero, "Stitches");
+        assert_eq!(heroes[0].win_rates.overall, Some(51.2));
+        assert_eq!(heroes[0].win_rates.player, Some(60.0));
+        assert_eq!(heroes[0].win_rates.player_games, Some(12));
+        assert_eq!(heroes[1].hero, "Genji");
+        assert_eq!(heroes[1].win_rates.overall, Some(49.0));
+        assert_eq!(heroes[1].win_rates.player, None);
+        assert_eq!(heroes[1].win_rates.player_games, None);
+    }
+
+    #[test]
+    fn build_heroes_handles_null_player_slot() {
+        let draft = Draft {
+            players: vec![DraftPlayer {
+                name: "ambiguous".into(),
+                name_rect: rect(100.0, 100.0),
+                heroes: vec![DraftHero { hero: "Stitches".into(), rect: rect(100.0, 200.0) }],
+                is_self: false,
+            }],
+        };
+        let mut overall = HashMap::new();
+        overall.insert("Stitches".to_string(), 51.2);
+        let resp = OverlayDraftResponse { overall, players: vec![None] };
+        let heroes = build_overlay_heroes(&draft, &resp, 1.0);
+        assert_eq!(heroes.len(), 1);
+        assert_eq!(heroes[0].win_rates.overall, Some(51.2));
+        assert_eq!(heroes[0].win_rates.player, None);
+        assert_eq!(heroes[0].win_rates.player_games, None);
     }
 }
