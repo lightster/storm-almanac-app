@@ -7,6 +7,7 @@ mod draft_types;
 mod draft_watcher;
 mod game_focus;
 mod game_session;
+mod hero_catalog;
 mod input_recorder;
 mod ocr;
 mod overlay_api;
@@ -1005,6 +1006,21 @@ pub fn run() {
             app.manage(SharedRecordingState::default());
             app.manage(game_session::RecorderHolder::default());
             app.manage(draft_overlay::SharedDraftPayload::default());
+            app.manage(hero_catalog::SharedHeroCatalog::new());
+
+            // Warm the hero catalog so the first draft pipeline run hits
+            // a cache. Failures here are non-fatal — the next ensure()
+            // call (from the pipeline) will retry.
+            let warmup_catalog = app
+                .state::<hero_catalog::SharedHeroCatalog>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                match warmup_catalog.ensure().await {
+                    Ok(heroes) => log::info!("hero catalog warmed ({} heroes)", heroes.len()),
+                    Err(e) => log::warn!("hero catalog warmup failed: {e}"),
+                }
+            });
 
             // Map blocker state — load persisted settings before tray builds
             // (the tray's "Enable Map Blocker" item reflects the saved flag).
