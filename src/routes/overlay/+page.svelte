@@ -5,6 +5,9 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { page } from '$app/state';
 
+	const BADGE_FONT_K = 0.16;
+	const BADGE_FONT_FLOOR_PX = 10;
+
 	let mode = $state('interactive');
 	let counter = $state(0);
 	/** @type {'blocking' | 'interactable'} */
@@ -261,16 +264,17 @@
 	</div>
 {:else if mode === 'draft'}
 	{#each draftHeroes as h (h.hero + h.rect.x + h.rect.y)}
+		{@const fontSize = Math.max(BADGE_FONT_FLOOR_PX, h.circle.width * BADGE_FONT_K)}
 		<div
 			class="wr-badge overall {wrClass(h.win_rates.overall)}"
-			style="left: {h.circle.x}px; top: {h.circle.y}px;"
+			style="left: {h.circle.x}px; top: {h.circle.y}px; font-size: {fontSize}px;"
 		>
 			{fmt(h.win_rates.overall)}
 		</div>
 		{#if h.win_rates.player !== null}
 			<div
 				class="wr-badge personal {wrClass(h.win_rates.player)}"
-				style="left: {h.circle.x + h.circle.width}px; top: {h.circle.y}px;"
+				style="left: {h.circle.x + h.circle.width}px; top: {h.circle.y}px; font-size: {fontSize}px;"
 			>
 				{h.is_self ? 'you' : h.player_name}&nbsp;{fmt(h.win_rates.player)}
 			</div>
@@ -486,7 +490,6 @@
 	.wr-badge {
 		position: absolute;
 		font-family: 'DM Sans', system-ui, sans-serif;
-		font-size: 14px;
 		font-weight: 700;
 		line-height: 1;
 		padding: 0.22em 0.5em;
