@@ -200,13 +200,21 @@ pub(crate) fn run_pipeline_with_image(
     let batch_ms = t.elapsed().as_millis();
     log::info!("draft pipeline: batch-fetch {batch_ms}ms");
 
-    let dpi_scale = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map(|m| m.scale_factor())
-        .unwrap_or(1.0);
-    let combined_scale = dpi_scale / extra_descale.unwrap_or(1.0);
+    let combined_scale = match extra_descale {
+        // Test mode: extra_descale already maps PNG pixels to logical
+        // CSS pixels (compute_test_scale targets monitor_logical, which
+        // is monitor_physical / dpi_scale). Inverting it gives the
+        // factor `descale` should divide by.
+        Some(test_display_scale) => 1.0 / test_display_scale,
+        // Live pipeline: OCR coords are physical monitor pixels; divide
+        // by dpi_scale to land in logical CSS pixels.
+        None => app
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map(|m| m.scale_factor())
+            .unwrap_or(1.0),
+    };
 
     let heroes = build_overlay_heroes(&draft, &resp, combined_scale);
 

@@ -73,6 +73,10 @@
 			}
 			unlisten = await listen('test-draft://load', (event) => {
 				const p = event?.payload;
+				console.log(
+					'test-draft://load received:',
+					p ? `dataUrl ${p.dataUrl?.length ?? '?'} bytes, scale ${p.scale}` : 'invalid payload'
+				);
 				if (p && typeof p.dataUrl === 'string') {
 					testDraft = {
 						dataUrl: p.dataUrl,

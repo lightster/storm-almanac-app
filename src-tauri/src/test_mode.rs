@@ -178,8 +178,14 @@ fn load_current(app: &AppHandle) {
         let mut guard = state.inner.lock().unwrap();
         guard.last_payload = Some(payload.clone());
     }
-    if let Err(e) = app.emit_to(TEST_DRAFT_LABEL, "test-draft://load", payload) {
-        log::error!("test mode: failed to emit load event: {e}");
+    let data_url_len = payload.data_url.len();
+    let payload_scale = payload.scale;
+    match app.emit_to(TEST_DRAFT_LABEL, "test-draft://load", payload) {
+        Ok(()) => log::info!(
+            "test mode: emitted load event ({} byte data URL, scale {:.3})",
+            data_url_len, payload_scale
+        ),
+        Err(e) => log::error!("test mode: failed to emit load event: {e}"),
     }
 
     log::info!("test mode: running pipeline against {}", path.display());
