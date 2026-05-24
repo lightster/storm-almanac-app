@@ -1060,8 +1060,10 @@ pub fn run() {
                 CheckMenuItemBuilder::with_id("enable_draft_overlay", "Enable Draft Overlay")
                     .checked(draft_enabled_at_startup)
                     .build(app)?;
+            #[cfg(debug_assertions)]
+            let show_test_draft = MenuItemBuilder::with_id("show_test_draft", "Show Test Draft").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Almanac").build(app)?;
-            let menu = MenuBuilder::new(app)
+            let mut menu = MenuBuilder::new(app)
                 .item(&open_website)
                 .item(&settings)
                 .separator()
@@ -1070,10 +1072,12 @@ pub fn run() {
                 .separator()
                 .item(&enable_blocker)
                 .item(&enable_draft)
-                .item(&toggle_overlay)
-                .separator()
-                .item(&quit)
-                .build()?;
+                .item(&toggle_overlay);
+            #[cfg(debug_assertions)]
+            {
+                menu = menu.separator().item(&show_test_draft);
+            }
+            let menu = menu.separator().item(&quit).build()?;
 
             #[cfg(target_os = "macos")]
             let (tray_icon, is_template) = (
@@ -1133,6 +1137,9 @@ pub fn run() {
                         let new_enabled = !cfg.draft_overlay_enabled;
                         set_draft_overlay_enabled(app, new_enabled);
                         let _ = enable_draft_menu.set_checked(new_enabled);
+                    } else if event.id() == "show_test_draft" {
+                        #[cfg(debug_assertions)]
+                        test_mode::run(app);
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
