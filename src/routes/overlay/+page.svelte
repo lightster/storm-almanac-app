@@ -263,14 +263,14 @@
 	{#each draftHeroes as h (h.hero + h.rect.x + h.rect.y)}
 		<div
 			class="wr-badge overall {wrClass(h.win_rates.overall)}"
-			style="left: {h.circle.x + h.circle.width * 0.15}px; top: {h.circle.y + h.circle.height * 0.15}px;"
+			style="left: {h.circle.x}px; top: {h.circle.y}px;"
 		>
 			{fmt(h.win_rates.overall)}
 		</div>
 		{#if h.win_rates.player !== null}
 			<div
 				class="wr-badge personal {wrClass(h.win_rates.player)}"
-				style="left: {h.circle.x + h.circle.width * 0.85}px; top: {h.circle.y + h.circle.height * 0.15}px;"
+				style="left: {h.circle.x + h.circle.width}px; top: {h.circle.y}px;"
 			>
 				{h.is_self ? 'you' : h.player_name}&nbsp;{fmt(h.win_rates.player)}
 			</div>
@@ -498,10 +498,10 @@
 		white-space: nowrap;
 	}
 	.wr-badge.overall {
-		transform: translate(-50%, -50%);
+		transform: translate(-100%, 0);
 	}
 	.wr-badge.personal {
-		transform: translate(-50%, -50%);
+		transform: none;
 	}
 	.wr-badge.good {
 		color: #5ef08a;
