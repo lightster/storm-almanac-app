@@ -119,37 +119,41 @@ pub fn next(app: &AppHandle) {
 
 /// Internal: load the fixture at the current index, push it to the
 /// test-draft window (opening it if needed), and trigger the pipeline.
+///
+/// On PNG load failure, advances to the next fixture and recurses;
+/// if every remaining fixture fails, the session ends quietly with
+/// an error log (the windows are not opened).
 fn load_current(app: &AppHandle) {
-    let (path, scale, img) = {
+    // Take only what we need from the mutex, then drop the guard
+    // before doing any I/O.
+    let path = {
         let state = app.state::<TestModeState>();
         let guard = state.inner.lock().unwrap();
-        let session = match guard.as_ref() {
-            Some(s) => s,
+        match guard.as_ref() {
+            Some(s) => s.fixtures[s.index].clone(),
             None => return,
-        };
-        let path = session.fixtures[session.index].clone();
-        let monitor = monitor_size(app);
-        let img = match image::open(&path) {
-            Ok(img) => img.to_rgba8(),
-            Err(e) => {
-                log::error!("test mode: failed to load {}: {e}", path.display());
-                return;
-            }
-        };
-        let png_size = (img.width(), img.height());
-        let scale = compute_test_scale(png_size, monitor);
-        (path, scale, img)
+        }
     };
 
-    // Read raw PNG bytes (separately from the decoded RgbaImage, so
-    // we don't have to re-encode the image just to display it).
+    let img = match image::open(&path) {
+        Ok(img) => img.to_rgba8(),
+        Err(e) => {
+            log::error!("test mode: failed to load {}: {e}", path.display());
+            return skip_to_next(app);
+        }
+    };
+
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
             log::error!("test mode: failed to read PNG bytes for {}: {e}", path.display());
-            return;
+            return skip_to_next(app);
         }
     };
+
+    let monitor = monitor_size(app);
+    let scale = compute_test_scale((img.width(), img.height()), monitor);
+
     let data_url = format!(
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(&bytes)
@@ -171,6 +175,34 @@ fn load_current(app: &AppHandle) {
             log::error!("test mode: pipeline failed: {e}");
         }
     });
+}
+
+/// Advance past a failed fixture: increment index, clear the session
+/// if we're now past the end, otherwise re-enter `load_current`.
+/// Used when a fixture fails to load — we move on instead of getting
+/// stuck.
+fn skip_to_next(app: &AppHandle) {
+    let still_have_one = {
+        let state = app.state::<TestModeState>();
+        let mut guard = state.inner.lock().unwrap();
+        match guard.as_mut() {
+            Some(session) => {
+                session.index += 1;
+                if session.index >= session.fixtures.len() {
+                    *guard = None;
+                    false
+                } else {
+                    true
+                }
+            }
+            None => false,
+        }
+    };
+    if still_have_one {
+        load_current(app);
+    } else {
+        log::warn!("test mode: all fixtures failed to load");
+    }
 }
 
 /// Look up the primary monitor's logical size in pixels. Falls back to
