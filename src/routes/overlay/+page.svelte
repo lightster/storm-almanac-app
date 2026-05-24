@@ -286,7 +286,7 @@
 			<img
 				src={testDraft.dataUrl}
 				alt="ARAM draft test fixture"
-				style="transform: translate(-50%, -50%) scale({testDraft.scale}); transform-origin: center;"
+				style="transform: scale({testDraft.scale}); transform-origin: top left;"
 			/>
 		</button>
 	{/if}
@@ -528,8 +528,8 @@
 
 	.test-draft-bg img {
 		position: absolute;
-		left: 50%;
-		top: 50%;
+		left: 0;
+		top: 0;
 		max-width: none;
 		max-height: none;
 		display: block;
