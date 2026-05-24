@@ -58,7 +58,13 @@ pub const TEST_DRAFT_LABEL: &str = "test-draft";
 /// the user advances past the last fixture or the window is closed.
 #[derive(Default)]
 pub struct TestModeState {
-    inner: Mutex<Option<Session>>,
+    inner: Mutex<Inner>,
+}
+
+#[derive(Default)]
+struct Inner {
+    session: Option<Session>,
+    last_payload: Option<LoadPayload>,
 }
 
 struct Session {
@@ -85,7 +91,9 @@ pub fn run(app: &AppHandle) {
     }
     {
         let state = app.state::<TestModeState>();
-        *state.inner.lock().unwrap() = Some(Session { fixtures, index: 0 });
+        let mut guard = state.inner.lock().unwrap();
+        guard.session = Some(Session { fixtures, index: 0 });
+        guard.last_payload = None;
     }
     load_current(app);
 }
@@ -96,11 +104,12 @@ pub fn next(app: &AppHandle) {
     let advance_or_finish = {
         let state = app.state::<TestModeState>();
         let mut guard = state.inner.lock().unwrap();
-        match guard.as_mut() {
+        match guard.session.as_mut() {
             Some(session) => {
                 session.index += 1;
                 if session.index >= session.fixtures.len() {
-                    *guard = None;
+                    guard.session = None;
+                    guard.last_payload = None;
                     None
                 } else {
                     Some(())
@@ -129,7 +138,7 @@ fn load_current(app: &AppHandle) {
     let path = {
         let state = app.state::<TestModeState>();
         let guard = state.inner.lock().unwrap();
-        match guard.as_ref() {
+        match guard.session.as_ref() {
             Some(s) => s.fixtures[s.index].clone(),
             None => return,
         }
@@ -164,6 +173,11 @@ fn load_current(app: &AppHandle) {
         data_url,
         scale,
     };
+    {
+        let state = app.state::<TestModeState>();
+        let mut guard = state.inner.lock().unwrap();
+        guard.last_payload = Some(payload.clone());
+    }
     if let Err(e) = app.emit_to(TEST_DRAFT_LABEL, "test-draft://load", payload) {
         log::error!("test mode: failed to emit load event: {e}");
     }
@@ -185,11 +199,12 @@ fn skip_to_next(app: &AppHandle) {
     let still_have_one = {
         let state = app.state::<TestModeState>();
         let mut guard = state.inner.lock().unwrap();
-        match guard.as_mut() {
+        match guard.session.as_mut() {
             Some(session) => {
                 session.index += 1;
                 if session.index >= session.fixtures.len() {
-                    *guard = None;
+                    guard.session = None;
+                    guard.last_payload = None;
                     false
                 } else {
                     true
@@ -273,6 +288,28 @@ fn close_window(app: &AppHandle) {
 /// so it can be registered unconditionally (with a release stub).
 pub fn handle_next_command(app: &AppHandle) {
     next(app);
+}
+
+/// Internal counterpart to the `test_mode_get_current` Tauri command in
+/// `lib.rs`. Returns the most recently emitted load payload, if any.
+/// Used by the webview's onMount to recover state when it loads after
+/// the load event has already fired.
+pub fn current_payload(app: &AppHandle) -> Option<LoadPayloadOwned> {
+    let state = app.state::<TestModeState>();
+    let guard = state.inner.lock().unwrap();
+    guard.last_payload.as_ref().map(|p| LoadPayloadOwned {
+        data_url: p.data_url.clone(),
+        scale: p.scale,
+    })
+}
+
+/// Serializable copy of `LoadPayload` for the Tauri command return path.
+/// (`LoadPayload` is private; this is a public mirror.)
+#[derive(serde::Serialize, Clone)]
+pub struct LoadPayloadOwned {
+    #[serde(rename = "dataUrl")]
+    pub data_url: String,
+    pub scale: f64,
 }
 
 #[cfg(test)]

@@ -60,6 +60,17 @@
 		}
 
 		if (mode === 'test-draft') {
+			try {
+				const data = await invoke('test_mode_get_current');
+				if (data && typeof data.dataUrl === 'string') {
+					testDraft = {
+						dataUrl: data.dataUrl,
+						scale: typeof data.scale === 'number' ? data.scale : 1,
+					};
+				}
+			} catch (e) {
+				console.error('test_mode_get_current failed', e);
+			}
 			unlisten = await listen('test-draft://load', (event) => {
 				const p = event?.payload;
 				if (p && typeof p.dataUrl === 'string') {

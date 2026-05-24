@@ -233,6 +233,22 @@ fn test_mode_next(app: tauri::AppHandle) {
     let _ = app;
 }
 
+/// Tauri command for the test-draft webview to pull the current load
+/// payload on mount. Returns `None` in release builds (the webview is
+/// never opened there).
+#[tauri::command]
+fn test_mode_get_current(app: tauri::AppHandle) -> Option<serde_json::Value> {
+    #[cfg(debug_assertions)]
+    {
+        return test_mode::current_payload(&app).and_then(|p| serde_json::to_value(p).ok());
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 fn open_website_window(app: &tauri::AppHandle, path: Option<&str>) {
     let full_url: String = match path {
         Some(p) => format!("{}{}", WEBSITE_URL, p),
@@ -1295,6 +1311,7 @@ pub fn run() {
             clear_webview_data,
             draft_overlay::get_draft_overlay_data,
             test_mode_next,
+            test_mode_get_current,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

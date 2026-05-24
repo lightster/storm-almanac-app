@@ -206,7 +206,7 @@ pub(crate) fn run_pipeline_with_image(
         .flatten()
         .map(|m| m.scale_factor())
         .unwrap_or(1.0);
-    let combined_scale = dpi_scale * extra_descale.unwrap_or(1.0);
+    let combined_scale = dpi_scale / extra_descale.unwrap_or(1.0);
 
     let heroes = build_overlay_heroes(&draft, &resp, combined_scale);
 
