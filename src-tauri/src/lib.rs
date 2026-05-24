@@ -13,6 +13,8 @@ mod ocr;
 mod overlay_api;
 mod screen_capture;
 mod state;
+#[cfg(debug_assertions)]
+mod test_mode;
 mod uploader;
 mod watcher;
 
