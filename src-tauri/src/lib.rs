@@ -13,6 +13,8 @@ mod ocr;
 mod overlay_api;
 mod screen_capture;
 mod state;
+#[cfg(debug_assertions)]
+mod test_mode;
 mod uploader;
 mod watcher;
 
@@ -217,6 +219,33 @@ async fn install_update(app: tauri::AppHandle) {
         Err(e) => {
             log::error!("Update check failed: {}", e);
         }
+    }
+}
+
+/// Tauri command invoked by the test-draft webview on click. Forwards
+/// to the test_mode module when present; a no-op in release builds
+/// (the webview is never opened there).
+#[tauri::command]
+fn test_mode_next(app: tauri::AppHandle) {
+    #[cfg(debug_assertions)]
+    test_mode::handle_next_command(&app);
+    #[cfg(not(debug_assertions))]
+    let _ = app;
+}
+
+/// Tauri command for the test-draft webview to pull the current load
+/// payload on mount. Returns `None` in release builds (the webview is
+/// never opened there).
+#[tauri::command]
+fn test_mode_get_current(app: tauri::AppHandle) -> Option<serde_json::Value> {
+    #[cfg(debug_assertions)]
+    {
+        return test_mode::current_payload(&app).and_then(|p| serde_json::to_value(p).ok());
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        None
     }
 }
 
@@ -1006,6 +1035,8 @@ pub fn run() {
             app.manage(game_session::RecorderHolder::default());
             app.manage(draft_overlay::SharedDraftPayload::default());
             app.manage(hero_catalog::SharedHeroCatalog::new());
+            #[cfg(debug_assertions)]
+            app.manage(test_mode::TestModeState::default());
 
             // Warm the hero catalog so the first draft pipeline run hits
             // a cache. Failures here are non-fatal — the next ensure()
@@ -1045,8 +1076,10 @@ pub fn run() {
                 CheckMenuItemBuilder::with_id("enable_draft_overlay", "Enable Draft Overlay")
                     .checked(draft_enabled_at_startup)
                     .build(app)?;
+            #[cfg(debug_assertions)]
+            let show_test_draft = MenuItemBuilder::with_id("show_test_draft", "Show Test Draft").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Storm Almanac").build(app)?;
-            let menu = MenuBuilder::new(app)
+            let mut menu = MenuBuilder::new(app)
                 .item(&open_website)
                 .item(&settings)
                 .separator()
@@ -1055,10 +1088,12 @@ pub fn run() {
                 .separator()
                 .item(&enable_blocker)
                 .item(&enable_draft)
-                .item(&toggle_overlay)
-                .separator()
-                .item(&quit)
-                .build()?;
+                .item(&toggle_overlay);
+            #[cfg(debug_assertions)]
+            {
+                menu = menu.separator().item(&show_test_draft);
+            }
+            let menu = menu.separator().item(&quit).build()?;
 
             #[cfg(target_os = "macos")]
             let (tray_icon, is_template) = (
@@ -1118,6 +1153,9 @@ pub fn run() {
                         let new_enabled = !cfg.draft_overlay_enabled;
                         set_draft_overlay_enabled(app, new_enabled);
                         let _ = enable_draft_menu.set_checked(new_enabled);
+                    } else if event.id() == "show_test_draft" {
+                        #[cfg(debug_assertions)]
+                        test_mode::run(app);
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -1272,6 +1310,8 @@ pub fn run() {
             reveal_path,
             clear_webview_data,
             draft_overlay::get_draft_overlay_data,
+            test_mode_next,
+            test_mode_get_current,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

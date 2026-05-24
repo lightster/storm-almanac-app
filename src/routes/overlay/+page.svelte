@@ -11,6 +11,8 @@
 	let blockerMode = $state('blocking');
 	/** @type {{ hero: string, player_name: string, is_self: boolean, rect: {x:number,y:number,width:number,height:number}, circle: {x:number,y:number,width:number,height:number}, win_rates: {overall: number|null, player: number|null, player_games: number|null} }[]} */
 	let draftHeroes = $state([]);
+	/** @type {{dataUrl: string, scale: number} | null} */
+	let testDraft = $state(null);
 	let flashing = $state(false);
 	/** @type {(() => void) | undefined} */
 	let unlisten;
@@ -19,7 +21,7 @@
 
 	onMount(async () => {
 		const m = page.url.searchParams.get('mode');
-		mode = m === 'clickthrough' || m === 'blocker' || m === 'draft' ? m : 'interactive';
+		mode = m === 'clickthrough' || m === 'blocker' || m === 'draft' || m === 'test-draft' ? m : 'interactive';
 
 		if (mode === 'clickthrough' || mode === 'draft') {
 			try {
@@ -56,6 +58,33 @@
 				}
 			});
 		}
+
+		if (mode === 'test-draft') {
+			try {
+				const data = await invoke('test_mode_get_current');
+				if (data && typeof data.dataUrl === 'string') {
+					testDraft = {
+						dataUrl: data.dataUrl,
+						scale: typeof data.scale === 'number' ? data.scale : 1,
+					};
+				}
+			} catch (e) {
+				console.error('test_mode_get_current failed', e);
+			}
+			unlisten = await listen('test-draft://load', (event) => {
+				const p = event?.payload;
+				console.log(
+					'test-draft://load received:',
+					p ? `dataUrl ${p.dataUrl?.length ?? '?'} bytes, scale ${p.scale}` : 'invalid payload'
+				);
+				if (p && typeof p.dataUrl === 'string') {
+					testDraft = {
+						dataUrl: p.dataUrl,
+						scale: typeof p.scale === 'number' ? p.scale : 1,
+					};
+				}
+			});
+		}
 	});
 
 	onDestroy(() => {
@@ -68,6 +97,14 @@
 			await getCurrentWindow().close();
 		} catch (e) {
 			console.error('close failed', e);
+		}
+	}
+
+	async function onTestDraftClick() {
+		try {
+			await invoke('test_mode_next');
+		} catch (e) {
+			console.error('test_mode_next failed', e);
 		}
 	}
 
@@ -239,6 +276,20 @@
 			</div>
 		{/if}
 	{/each}
+{:else if mode === 'test-draft'}
+	{#if testDraft}
+		<button
+			class="test-draft-bg"
+			onclick={onTestDraftClick}
+			aria-label="advance to next test fixture"
+		>
+			<img
+				src={testDraft.dataUrl}
+				alt="ARAM draft test fixture"
+				style="transform: scale({testDraft.scale}); transform-origin: top left;"
+			/>
+		</button>
+	{/if}
 {/if}
 
 <style>
@@ -460,5 +511,27 @@
 	}
 	.wr-badge.neutral {
 		color: #e8eaf0;
+	}
+
+	.test-draft-bg {
+		position: fixed;
+		inset: 0;
+		width: 100vw;
+		height: 100vh;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		background: #000;
+		cursor: pointer;
+		overflow: hidden;
+	}
+
+	.test-draft-bg img {
+		position: absolute;
+		left: 0;
+		top: 0;
+		max-width: none;
+		max-height: none;
+		display: block;
 	}
 </style>
