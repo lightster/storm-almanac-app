@@ -489,8 +489,8 @@
 		font-size: 14px;
 		font-weight: 700;
 		line-height: 1;
-		padding: 3px 7px;
-		border-radius: 6px;
+		padding: 0.22em 0.5em;
+		border-radius: 0.43em;
 		background: rgba(8, 10, 20, 0.82);
 		border: 1px solid rgba(255, 255, 255, 0.16);
 		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
