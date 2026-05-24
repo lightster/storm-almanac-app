@@ -44,6 +44,205 @@ pub fn compute_test_scale(png: (u32, u32), monitor: (u32, u32)) -> f64 {
     sx.min(sy).min(1.0)
 }
 
+use base64::Engine as _;
+use serde::Serialize;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// Label of the test-draft window. Reused across cycles; we open it
+/// once on the first trigger and swap its content on subsequent clicks.
+pub const TEST_DRAFT_LABEL: &str = "test-draft";
+
+/// Tauri-managed state for an in-progress test session. Holds the
+/// sorted fixture paths and the current index. Reset (cleared) when
+/// the user advances past the last fixture or the window is closed.
+#[derive(Default)]
+pub struct TestModeState {
+    inner: Mutex<Option<Session>>,
+}
+
+struct Session {
+    fixtures: Vec<std::path::PathBuf>,
+    index: usize,
+}
+
+#[derive(Serialize, Clone)]
+struct LoadPayload {
+    #[serde(rename = "dataUrl")]
+    data_url: String,
+    scale: f64,
+}
+
+/// Entry point invoked by the tray menu item. Scans the fixture
+/// directory, starts a fresh session at index 0, opens (or reuses)
+/// the test-draft window, and runs the pipeline against the first
+/// fixture.
+pub fn run(app: &AppHandle) {
+    let fixtures = scan_fixtures(std::path::Path::new(FIXTURE_DIR));
+    if fixtures.is_empty() {
+        log::warn!("test mode: no .png fixtures found in {FIXTURE_DIR}");
+        return;
+    }
+    {
+        let state = app.state::<TestModeState>();
+        *state.inner.lock().unwrap() = Some(Session { fixtures, index: 0 });
+    }
+    load_current(app);
+}
+
+/// Advance to the next fixture in the active session. If we're past
+/// the last one, close the test window and the overlay.
+pub fn next(app: &AppHandle) {
+    let advance_or_finish = {
+        let state = app.state::<TestModeState>();
+        let mut guard = state.inner.lock().unwrap();
+        match guard.as_mut() {
+            Some(session) => {
+                session.index += 1;
+                if session.index >= session.fixtures.len() {
+                    *guard = None;
+                    None
+                } else {
+                    Some(())
+                }
+            }
+            None => None,
+        }
+    };
+    if advance_or_finish.is_some() {
+        load_current(app);
+    } else {
+        close_window(app);
+        crate::draft_overlay::hide_window(app);
+    }
+}
+
+/// Internal: load the fixture at the current index, push it to the
+/// test-draft window (opening it if needed), and trigger the pipeline.
+fn load_current(app: &AppHandle) {
+    let (path, scale, img) = {
+        let state = app.state::<TestModeState>();
+        let guard = state.inner.lock().unwrap();
+        let session = match guard.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+        let path = session.fixtures[session.index].clone();
+        let monitor = monitor_size(app);
+        let img = match image::open(&path) {
+            Ok(img) => img.to_rgba8(),
+            Err(e) => {
+                log::error!("test mode: failed to load {}: {e}", path.display());
+                return;
+            }
+        };
+        let png_size = (img.width(), img.height());
+        let scale = compute_test_scale(png_size, monitor);
+        (path, scale, img)
+    };
+
+    // Read raw PNG bytes (separately from the decoded RgbaImage, so
+    // we don't have to re-encode the image just to display it).
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("test mode: failed to read PNG bytes for {}: {e}", path.display());
+            return;
+        }
+    };
+    let data_url = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    );
+
+    open_or_focus_window(app);
+    let payload = LoadPayload {
+        data_url,
+        scale,
+    };
+    if let Err(e) = app.emit_to(TEST_DRAFT_LABEL, "test-draft://load", payload) {
+        log::error!("test mode: failed to emit load event: {e}");
+    }
+
+    log::info!("test mode: running pipeline against {}", path.display());
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = crate::draft_overlay::run_pipeline_with_image(&app_clone, img, Some(scale)) {
+            log::error!("test mode: pipeline failed: {e}");
+        }
+    });
+}
+
+/// Look up the primary monitor's logical size in pixels. Falls back to
+/// 1920x1080 if unavailable (very unusual on Windows; the live overlay
+/// has the same fallback shape).
+fn monitor_size(app: &AppHandle) -> (u32, u32) {
+    app.primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| {
+            let scale = m.scale_factor();
+            let s = m.size();
+            (
+                (s.width as f64 / scale).round() as u32,
+                (s.height as f64 / scale).round() as u32,
+            )
+        })
+        .unwrap_or((1920, 1080))
+}
+
+/// Open the test-draft window if not present; otherwise focus it so
+/// it surfaces above other windows. NOT always-on-top — the draft
+/// overlay window IS always-on-top and must sit above this one.
+fn open_or_focus_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(TEST_DRAFT_LABEL) {
+        let _ = w.set_focus();
+        return;
+    }
+    let mut builder = WebviewWindowBuilder::new(
+        app,
+        TEST_DRAFT_LABEL,
+        WebviewUrl::App("/overlay?mode=test-draft".into()),
+    )
+    .decorations(false)
+    .always_on_top(false)
+    .skip_taskbar(true)
+    .resizable(false)
+    .focusable(true)
+    .visible(true);
+
+    if let Ok(Some(m)) = app.primary_monitor() {
+        let scale = m.scale_factor();
+        let size = m.size();
+        let pos = m.position();
+        builder = builder
+            .inner_size(size.width as f64 / scale, size.height as f64 / scale)
+            .position(pos.x as f64 / scale, pos.y as f64 / scale);
+    }
+
+    match builder.build() {
+        Ok(_) => log::info!("test mode: opened test-draft window"),
+        Err(e) => log::error!("test mode: failed to open window: {e}"),
+    }
+}
+
+fn close_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window(TEST_DRAFT_LABEL) {
+        match w.close() {
+            Ok(_) => log::info!("test mode: closed test-draft window"),
+            Err(e) => log::error!("test mode: close failed: {e}"),
+        }
+    }
+}
+
+/// Internal counterpart to the `test_mode_next` Tauri command in
+/// `lib.rs`. Forwards to `next`. Kept here so the test-mode logic
+/// stays in one module; the public Tauri command lives in `lib.rs`
+/// so it can be registered unconditionally (with a release stub).
+pub fn handle_next_command(app: &AppHandle) {
+    next(app);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

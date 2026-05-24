@@ -222,6 +222,17 @@ async fn install_update(app: tauri::AppHandle) {
     }
 }
 
+/// Tauri command invoked by the test-draft webview on click. Forwards
+/// to the test_mode module when present; a no-op in release builds
+/// (the webview is never opened there).
+#[tauri::command]
+fn test_mode_next(app: tauri::AppHandle) {
+    #[cfg(debug_assertions)]
+    test_mode::handle_next_command(&app);
+    #[cfg(not(debug_assertions))]
+    let _ = app;
+}
+
 fn open_website_window(app: &tauri::AppHandle, path: Option<&str>) {
     let full_url: String = match path {
         Some(p) => format!("{}{}", WEBSITE_URL, p),
@@ -1008,6 +1019,8 @@ pub fn run() {
             app.manage(game_session::RecorderHolder::default());
             app.manage(draft_overlay::SharedDraftPayload::default());
             app.manage(hero_catalog::SharedHeroCatalog::new());
+            #[cfg(debug_assertions)]
+            app.manage(test_mode::TestModeState::default());
 
             // Warm the hero catalog so the first draft pipeline run hits
             // a cache. Failures here are non-fatal — the next ensure()
@@ -1274,6 +1287,7 @@ pub fn run() {
             reveal_path,
             clear_webview_data,
             draft_overlay::get_draft_overlay_data,
+            test_mode_next,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
