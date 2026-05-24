@@ -146,27 +146,39 @@ pub fn run_pipeline(app: tauri::AppHandle) {
 }
 
 fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
-    let pipeline_start = std::time::Instant::now();
-
     let t = std::time::Instant::now();
     let img = crate::screen_capture::capture_primary_monitor()?;
     let capture_ms = t.elapsed().as_millis();
+    log::info!("draft pipeline: capture {capture_ms}ms");
+    run_pipeline_with_image(app, img, None)
+}
+
+/// Shared pipeline body: OCR through render. Used by both the live
+/// pipeline (image from `capture_primary_monitor`) and test mode
+/// (image loaded from a PNG fixture).
+///
+/// `extra_descale` is multiplied into the existing DPI descale when
+/// rendering badge coordinates. Test mode passes `Some(scale)` when
+/// the displayed PNG is smaller than its native resolution (because
+/// it was scaled down to fit the monitor); the live pipeline always
+/// passes `None`.
+pub(crate) fn run_pipeline_with_image(
+    app: &tauri::AppHandle,
+    img: image::RgbaImage,
+    extra_descale: Option<f64>,
+) -> Result<(), String> {
+    let pipeline_start = std::time::Instant::now();
 
     let t = std::time::Instant::now();
     let lines = crate::ocr::recognize_lines(&img)?;
     let ocr_ms = t.elapsed().as_millis();
-    log::info!(
-        "draft pipeline: capture {capture_ms}ms, ocr {ocr_ms}ms ({} lines)",
-        lines.len()
-    );
+    log::info!("draft pipeline: ocr {ocr_ms}ms ({} lines)", lines.len());
 
     if !crate::draft_parse::looks_like_draft(&lines) {
         log::info!("draft overlay: no 'CHOOSE A HERO' found; ignoring");
         return Ok(());
     }
 
-    // Fetch (or read cached) hero catalog. The startup warmup usually
-    // makes this ~0 ms; cold-start worst case is one round trip.
     let catalog_state = app.state::<crate::hero_catalog::SharedHeroCatalog>();
     let catalog = catalog_state.inner().clone();
     let t = std::time::Instant::now();
@@ -188,15 +200,15 @@ fn run_pipeline_inner(app: &tauri::AppHandle) -> Result<(), String> {
     let batch_ms = t.elapsed().as_millis();
     log::info!("draft pipeline: batch-fetch {batch_ms}ms");
 
-    // Physical-pixel OCR rects -> logical pixels for the overlay window.
-    let scale = app
+    let dpi_scale = app
         .primary_monitor()
         .ok()
         .flatten()
         .map(|m| m.scale_factor())
         .unwrap_or(1.0);
+    let combined_scale = dpi_scale * extra_descale.unwrap_or(1.0);
 
-    let heroes = build_overlay_heroes(&draft, &resp, scale);
+    let heroes = build_overlay_heroes(&draft, &resp, combined_scale);
 
     log::info!(
         "draft pipeline: total {}ms",
