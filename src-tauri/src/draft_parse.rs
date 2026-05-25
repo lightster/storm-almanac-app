@@ -71,10 +71,29 @@ pub fn parse_draft(lines: &[OcrLine], hero_list: &[String]) -> Draft {
         hero: String,
         line: &'a OcrLine,
     }
-    let mut hero_labels: Vec<HeroLabel> = lines
-        .iter()
-        .filter_map(|l| match_hero(&l.text, hero_list).map(|hero| HeroLabel { hero, line: l }))
-        .collect();
+    #[cfg(debug_assertions)]
+    log::info!(
+        "draft_parse: matching {} OCR lines against {} catalog heroes",
+        lines.len(),
+        hero_list.len()
+    );
+    let mut hero_labels: Vec<HeroLabel> = Vec::new();
+    for l in lines {
+        let m = match_hero(&l.text, hero_list);
+        #[cfg(debug_assertions)]
+        log::info!(
+            "draft_parse OCR line: text={:?} rect=({:.0},{:.0},{:.0},{:.0}) hero_match={:?}",
+            l.text,
+            l.rect.x,
+            l.rect.y,
+            l.rect.width,
+            l.rect.height,
+            m
+        );
+        if let Some(hero) = m {
+            hero_labels.push(HeroLabel { hero, line: l });
+        }
+    }
     if hero_labels.is_empty() {
         return Draft { players: vec![] };
     }
