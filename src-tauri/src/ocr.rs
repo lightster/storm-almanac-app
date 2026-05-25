@@ -10,14 +10,18 @@ use windows::Media::Ocr::OcrEngine;
 #[cfg(windows)]
 use windows::Storage::Streams::DataWriter;
 
+/// Hard cap on the larger dimension of any image handed to Windows.Media.Ocr.
+///
+/// `OcrEngine::MaxImageDimension` is supposed to be the engine's reliable
+/// upper bound, but empirically it under-reports failure: a 4K HoTS draft
+/// screenshot consistently loses entire portrait rows in the left half of
+/// the image even though it falls under the engine's reported maximum,
+/// while the same draft at ~2000 px wide returns every text region cleanly.
+/// We cap below the engine's stated max to stay in the regime that works.
+const OCR_TARGET_MAX_DIM: u32 = 2000;
+
 /// Factor by which an `width`x`height` image must shrink so neither dimension
 /// exceeds `max_dim`. Returns `1.0` when the image already fits.
-///
-/// Windows.Media.Ocr.OcrEngine silently drops content from oversized inputs:
-/// MSDN documents `MaxImageDimension` as the largest pixel dimension the
-/// engine reliably handles, and recommends pre-scaling above that. Empirically
-/// (4K vs 1080p fixtures with identical text) the engine returns roughly half
-/// the lines on the oversized image and misses entire portrait rows.
 fn ocr_scale(width: u32, height: u32, max_dim: u32) -> f64 {
     let larger = width.max(height);
     if larger <= max_dim {
@@ -33,20 +37,21 @@ pub fn recognize_lines(img: &image::RgbaImage) -> Result<Vec<OcrLine>, String> {
     let engine = OcrEngine::TryCreateFromUserProfileLanguages()
         .map_err(|e| e.to_string())?;
     // MaxImageDimension is a static property on OcrEngine, not an instance one.
-    let max_dim = OcrEngine::MaxImageDimension().map_err(|e| e.to_string())?;
+    let engine_max = OcrEngine::MaxImageDimension().map_err(|e| e.to_string())?;
+    let effective_max = engine_max.min(OCR_TARGET_MAX_DIM);
+    log::info!(
+        "OCR: input {}x{} (engine max_dim={}, effective max={})",
+        img.width(),
+        img.height(),
+        engine_max,
+        effective_max
+    );
 
-    let scale = ocr_scale(img.width(), img.height(), max_dim);
+    let scale = ocr_scale(img.width(), img.height(), effective_max);
     let resized = if scale < 1.0 {
         let new_w = (img.width() as f64 * scale).round().max(1.0) as u32;
         let new_h = (img.height() as f64 * scale).round().max(1.0) as u32;
-        log::info!(
-            "OCR: resizing input from {}x{} to {}x{} (engine max_dim={})",
-            img.width(),
-            img.height(),
-            new_w,
-            new_h,
-            max_dim
-        );
+        log::info!("OCR: resizing input to {}x{}", new_w, new_h);
         Some(image::imageops::resize(
             img,
             new_w,
