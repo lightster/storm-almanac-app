@@ -52,11 +52,14 @@ pub fn recognize_lines(img: &image::RgbaImage) -> Result<Vec<OcrLine>, String> {
         let new_w = (img.width() as f64 * scale).round().max(1.0) as u32;
         let new_h = (img.height() as f64 * scale).round().max(1.0) as u32;
         log::info!("OCR: resizing input to {}x{}", new_w, new_h);
+        // Triangle (bilinear) is ~5-10x faster than Lanczos3 in debug builds
+        // and preserves text edges well enough for OCR; quality difference
+        // matters only at the pixel-detail level we don't need.
         Some(image::imageops::resize(
             img,
             new_w,
             new_h,
-            image::imageops::FilterType::Lanczos3,
+            image::imageops::FilterType::Triangle,
         ))
     } else {
         None
